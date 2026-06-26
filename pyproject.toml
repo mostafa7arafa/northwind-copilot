@@ -1,0 +1,15 @@
+[project]
+name = "northwind-copilot"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=0.3",
+    "langchain-community>=0.3",
+    "langchain-openai>=0.2",
+    "langchain-ollama>=0.2",
+    "langgraph>=0.2",
+    "langgraph-cli[inmem]",
+    "faiss-cpu>=1.8",
+    "sqlalchemy>=2.0",
+    "python-dotenv>=1.0",
+]

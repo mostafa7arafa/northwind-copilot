@@ -1,0 +1,12 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.faiss_index/
+*.egg-info/
+dist/
+.pytest_cache/
+eval/results/
+.langgraph_api/
+*.log

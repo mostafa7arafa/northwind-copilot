@@ -1,0 +1,8 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "northwind-copilot": "./agent/agent.py:graph"
+    },
+    "env": "./.env",
+    "python_version": "3.12"
+}
