@@ -17,13 +17,13 @@ import json
 import sys
 import time
 import warnings
-
-# Harmless noise from langchain serializing ChatOllama state in the checkpointer.
-warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.main")
 from datetime import datetime, timezone
 from pathlib import Path
 
 from eval.graders import grade
+
+# Harmless noise from langchain serializing ChatOllama state in the checkpointer.
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.main")
 
 ROOT = Path(__file__).resolve().parent.parent
 DATASET = ROOT / "benchmark_dataset.jsonl"
@@ -73,8 +73,7 @@ def run_one(graph, record: dict) -> dict:
     try:
         result = graph.invoke(
             {"messages": [{"role": "user", "content": question}]},
-            config={"configurable": {"thread_id": record["id"]},
-                    "recursion_limit": 50},
+            config={"configurable": {"thread_id": record["id"]}, "recursion_limit": 50},
         )
         messages = result["messages"]
         answer = extract_answer(messages)
@@ -103,7 +102,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Northwind agent benchmark.")
     parser.add_argument("--id", action="append", help="Only run these id(s).")
     parser.add_argument("--limit", type=int, help="Run at most N questions.")
-    parser.add_argument("--no-save", action="store_true", help="Skip writing results JSON.")
+    parser.add_argument(
+        "--no-save", action="store_true", help="Skip writing results JSON."
+    )
     args = parser.parse_args()
 
     records = load_dataset(DATASET)
@@ -117,7 +118,8 @@ def main() -> int:
         return 1
 
     print(f"Loading agent... ({len(records)} question(s) to run)")
-    from agent.agent import graph  # imported lazily so --help is instant
+    # imported lazily so --help is instant
+    from northwind_copilot.application.graph import graph
 
     results = []
     for i, record in enumerate(records, 1):
@@ -159,7 +161,7 @@ def main() -> int:
             (RESULTS_DIR / name).write_text(
                 json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
             )
-        print(f"Saved -> eval/results/latest.json")
+        print("Saved -> eval/results/latest.json")
 
     return 0 if passed == total else 2
 

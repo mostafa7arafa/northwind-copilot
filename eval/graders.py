@@ -24,8 +24,9 @@ def _numbers_in(text: str) -> list[float]:
     return out
 
 
-def number_appears(answer: str, target: float, rel_tol: float = 0.01,
-                   abs_tol: float = 0.5) -> bool:
+def number_appears(
+    answer: str, target: float, rel_tol: float = 0.01, abs_tol: float = 0.5
+) -> bool:
     """True if some number in `answer` matches `target` within tolerance.
 
     Relative tolerance (default 1%) absorbs rounding differences; the small
