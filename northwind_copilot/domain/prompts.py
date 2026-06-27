@@ -23,4 +23,10 @@ product categories, or return policies — before writing SQL.
 7. Be concise — show numbers, not explanations, unless the user asks for detail.
 8. NEVER end your turn with an empty reply. Every turn must be either a tool \
 call or a final answer. If a query is complex, work through it step by step — \
-do not stop and produce nothing."""
+do not stop and produce nothing.
+9. Distinguish filtering to QUALIFY a group from filtering the values you \
+aggregate. When a question asks about records that "contain" or "include" \
+something (e.g. orders that include a given product or category), use a \
+subquery (IN / EXISTS) to pick which records qualify, then aggregate their \
+FULL values. Only restrict the aggregated rows themselves when the question \
+asks specifically for that thing's own amount."""
