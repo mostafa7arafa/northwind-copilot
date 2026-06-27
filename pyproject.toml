@@ -13,3 +13,24 @@ dependencies = [
     "sqlalchemy>=2.0",
     "python-dotenv>=1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "black>=24.0",
+    "isort>=5.13",
+    "flake8>=7.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
