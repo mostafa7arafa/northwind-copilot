@@ -33,19 +33,8 @@ product categories, or return policies — before writing SQL.
 6. Dates are stored as text; use strftime('%Y-%m', OrderDate) for month filtering.
 7. Be concise — show numbers, not explanations, unless the user asks for detail.
 8. NEVER end your turn with an empty reply. Every turn must be either a tool \
-call or a final answer. If a query is complex, write the SQL step by step — \
-do not stop and produce nothing.
-
-Worked example — gross margin by customer (margin = 30% of revenue):
-  SELECT c.CompanyName,
-         ROUND(SUM(oi.UnitPrice * 0.3 * oi.Quantity * (1 - oi.Discount)), 2) AS margin
-  FROM Customers c
-  JOIN Orders o ON c.CustomerID = o.CustomerID
-  JOIN "Order Details" oi ON o.OrderID = oi.OrderID
-  WHERE strftime('%Y', o.OrderDate) = '2017'
-  GROUP BY c.CompanyName
-  ORDER BY margin DESC
-  LIMIT 1;"""
+call or a final answer. If a query is complex, work through it step by step — \
+do not stop and produce nothing."""
 
 
 @before_model
