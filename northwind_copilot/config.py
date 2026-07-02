@@ -27,6 +27,11 @@ def _env(name: str, default: str) -> str:
         The resolved string value.
     """
     value = os.getenv(name)
+    if value is None:
+        return default
+    # Some env loaders (e.g. langgraph dev reading .env) pass values with the
+    # surrounding quotes attached; strip those and whitespace before use.
+    value = value.strip().strip("\"'").strip()
     return value if value else default
 
 
@@ -44,18 +49,26 @@ class Settings:
             the re-sent schema payload small.
         docs_dir: Directory of markdown knowledge documents.
         faiss_path: On-disk location of the FAISS index.
-        max_context_tokens: Token budget for the trimmed conversation window.
+        max_context_tokens: Token budget for the trimmed conversation window on
+            local (Ollama) engines, whose context windows are tight.
+        max_context_tokens_cloud: Larger budget for cloud engines, so a curated
+            multi-turn history survives the trim step.
     """
 
     primary_model: str = _env("PRIMARY_MODEL", "gemma4-12b")
     fallback_model: str = _env("FALLBACK_MODEL", "gpt-4.1-mini")
     embedding_model: str = _env("EMBEDDING_MODEL", "text-embedding-3-small")
     temperature: float = 0.0
-    database_uri: str = _env("DATABASE_URI", "sqlite:///data/northwind.sqlite")
+    # NB: NOT "DATABASE_URI" — langgraph reserves that name for its own
+    # persistence layer and overwrites it with ":memory:" under `langgraph dev`.
+    database_uri: str = _env(
+        "NORTHWIND_DATABASE_URI", "sqlite:///data/northwind.sqlite"
+    )
     sample_rows_in_table_info: int = 0
     docs_dir: str = _env("DOCS_DIR", "docs")
     faiss_path: str = _env("FAISS_PATH", ".faiss_index")
     max_context_tokens: int = 8000
+    max_context_tokens_cloud: int = 32000
 
 
 settings = Settings()
