@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useState } from "react";
 import type { Turn } from "@/lib/types";
+import { turnCharts, turnQueries } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/cn";
 import { ChartCard } from "./ChartCard";
@@ -11,7 +12,8 @@ import { ResultsTable } from "./ResultsTable";
 import { SqlCard } from "./SqlCard";
 import { ChartSkeleton, SqlSkeleton, TableSkeleton } from "./Skeletons";
 
-const hasArtifact = (t: Turn) => !!(t.sql || t.table || t.chart);
+const hasArtifact = (t: Turn) =>
+  turnQueries(t).length > 0 || turnCharts(t).length > 0;
 
 /** The right-docked artifact canvas — the analysis workspace. SQL, results, and
  * the chart live here (not in the chat thread) so the conversation stays a clean
@@ -51,11 +53,14 @@ export function ArtifactPanel() {
   const tint =
     focus?.engine === "cloud" ? "var(--color-electric)" : "var(--color-steel)";
 
-  const showSqlSkeleton = !!focus && !focus.sql && focus.stages.sql === "active";
+  const queries = focus ? turnQueries(focus) : [];
+  const charts = focus ? turnCharts(focus) : [];
+  const showSqlSkeleton =
+    !!focus && queries.length === 0 && focus.stages.sql === "active";
   const showTableSkeleton =
-    !!focus && !focus.table && focus.stages.results === "active";
+    !!focus && !queries.some((q) => q.table) && focus.stages.results === "active";
   const showChartSkeleton =
-    !!focus && !focus.chart && focus.stages.chart === "active";
+    !!focus && charts.length === 0 && focus.stages.chart === "active";
 
   return (
     <AnimatePresence initial={false}>
@@ -100,19 +105,22 @@ export function ArtifactPanel() {
               )}
             </div>
             <div className="flex-1 space-y-3 overflow-auto p-4">
-              {focus.sql && <SqlCard sql={focus.sql} tint={tint} />}
+              {queries.map((q, i) => (
+                <div key={i} className="space-y-3">
+                  {q.sql && <SqlCard sql={q.sql} tint={tint} />}
+                  {q.table && <ResultsTable data={q.table} />}
+                </div>
+              ))}
               {showSqlSkeleton && <SqlSkeleton />}
-
-              {focus.table && <ResultsTable data={focus.table} />}
               {showTableSkeleton && <TableSkeleton />}
 
-              {focus.chart && (
-                <ChartCard option={focus.chart} inferred={!!focus.chartInferred} />
-              )}
+              {charts.map((c, i) => (
+                <ChartCard key={i} option={c.option} inferred={c.inferred} />
+              ))}
               {showChartSkeleton && <ChartSkeleton />}
 
               {focus.running &&
-                !focus.sql &&
+                queries.length === 0 &&
                 !showSqlSkeleton &&
                 !showTableSkeleton &&
                 !showChartSkeleton && (

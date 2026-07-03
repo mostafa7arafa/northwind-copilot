@@ -10,6 +10,7 @@ import type {
   TableData,
   Turn,
 } from "./types";
+import { turnQueries } from "./types";
 
 const STAGES: StageId[] = [
   "understand",
@@ -23,7 +24,14 @@ const STAGES: StageId[] = [
 const idleStages = () =>
   Object.fromEntries(STAGES.map((s) => [s, "idle"])) as Turn["stages"];
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2, 10);
+
+// Cap retained sessions so localStorage can't grow without bound. Each session
+// can hold several turns with up to 500 result rows apiece.
+const MAX_SESSIONS = 50;
 
 function newSession(): Session {
   return { id: uid(), title: "New analysis", turns: [], createdAt: Date.now() };
@@ -56,8 +64,12 @@ function turnMemory(t: Turn, engine: Engine): string {
   if (engine === "local") return t.answer ?? "";
   const parts: string[] = [];
   if (t.answer) parts.push(t.answer);
-  if (t.sql) parts.push("SQL used:\n```sql\n" + t.sql + "\n```");
-  if (t.table && t.table.rows.length) parts.push(compactTable(t.table));
+  // A complex turn may have run several queries; recap the first few so
+  // follow-ups can anchor on any of them.
+  for (const q of turnQueries(t).slice(0, 3)) {
+    if (q.sql) parts.push("SQL used:\n```sql\n" + q.sql + "\n```");
+    if (q.table && q.table.rows.length) parts.push(compactTable(q.table));
+  }
   return parts.join("\n\n");
 }
 
@@ -182,7 +194,11 @@ export const useStore = create<State>()(
 
       createSession: () => {
         const s = newSession();
-        set({ sessions: [s, ...get().sessions], currentId: s.id, pinnedTurnId: null });
+        set({
+          sessions: [s, ...get().sessions].slice(0, MAX_SESSIONS),
+          currentId: s.id,
+          pinnedTurnId: null,
+        });
       },
       selectSession: (id) => set({ currentId: id, pinnedTurnId: null }),
 
@@ -241,7 +257,9 @@ export const useStore = create<State>()(
           ),
         });
 
-        const patch = (p: Partial<Turn>) =>
+        // patchFn computes the update from the turn's current state, so
+        // handlers can append to the queries/charts arrays as events stream in.
+        const patchFn = (fn: (t: Turn) => Partial<Turn>) =>
           set({
             sessions: get().sessions.map((s) =>
               s.id !== currentId
@@ -249,11 +267,12 @@ export const useStore = create<State>()(
                 : {
                     ...s,
                     turns: s.turns.map((t) =>
-                      t.id === turn.id ? { ...t, ...p } : t
+                      t.id === turn.id ? { ...t, ...fn(t) } : t
                     ),
                   }
             ),
           });
+        const patch = (p: Partial<Turn>) => patchFn(() => p);
 
         const setStage = (stage: StageId, status: "active" | "done") =>
           set({
@@ -318,19 +337,43 @@ export const useStore = create<State>()(
                   setStage(e.stage, e.status);
                   break;
                 case "sql":
-                  patch({ sql: e.sql });
+                  patchFn((t) => ({
+                    sql: e.sql,
+                    queries: [...(t.queries ?? []), { sql: e.sql }],
+                  }));
                   break;
-                case "table":
-                  patch({
-                    table: {
-                      columns: e.columns,
-                      rows: e.rows,
-                      truncated: e.truncated,
-                    },
+                case "table": {
+                  const data = {
+                    columns: e.columns,
+                    rows: e.rows,
+                    truncated: e.truncated,
+                  };
+                  patchFn((t) => {
+                    // Pair the table with its query by seq; fall back to the
+                    // first query still missing a table.
+                    const queries = [...(t.queries ?? [])];
+                    const i =
+                      typeof e.seq === "number" && queries[e.seq]
+                        ? e.seq
+                        : queries.findIndex((q) => !q.table);
+                    if (i >= 0 && queries[i]) {
+                      queries[i] = { ...queries[i], table: data };
+                    } else {
+                      queries.push({ sql: "", table: data });
+                    }
+                    return { table: data, queries };
                   });
                   break;
+                }
                 case "chart":
-                  patch({ chart: e.option, chartInferred: e.inferred });
+                  patchFn((t) => ({
+                    chart: e.option,
+                    chartInferred: e.inferred,
+                    charts: [
+                      ...(t.charts ?? []),
+                      { option: e.option, inferred: e.inferred },
+                    ],
+                  }));
                   break;
                 case "insights":
                   patch({ insights: { text: e.text, bullets: e.bullets } });
@@ -359,11 +402,14 @@ export const useStore = create<State>()(
     }),
     {
       name: "trading-desk",
+      // NB: `keys` (provider API keys) are deliberately NOT persisted. Keeping
+      // them in localStorage exposes them to any XSS or shared-machine user;
+      // they live in memory only and are re-entered per session until the
+      // backend stores them per-user server-side.
       partialize: (s) => ({
         engine: s.engine,
         provider: s.provider,
         model: s.model,
-        keys: s.keys,
         sessions: s.sessions,
         currentId: s.currentId,
         sidebarOpen: s.sidebarOpen,

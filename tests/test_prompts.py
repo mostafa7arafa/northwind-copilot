@@ -8,6 +8,7 @@ from northwind_copilot.core.prompts import (
     INSIGHTS_INSTRUCTIONS,
     LEAN_LOCAL_PROMPT,
     PRESENTATION_INSTRUCTIONS,
+    SCOPE_INSTRUCTIONS,
     SYSTEM_PROMPT,
     build_system_prompt,
 )
@@ -27,12 +28,19 @@ class TestBuildSystemPromptLocal:
         prompt = build_system_prompt(is_local=True, supports_charts=True)
         assert ECHARTS_INSTRUCTIONS.strip() not in prompt
 
+    def test_local_never_gets_scope_rules(self):
+        # Scope discipline targets cloud exploration; the lean local prompt
+        # stays minimal.
+        prompt = build_system_prompt(is_local=True, supports_charts=False)
+        assert SCOPE_INSTRUCTIONS.strip() not in prompt
+
 
 class TestBuildSystemPromptCloud:
     def test_cloud_uses_full_prompt_with_data_integrity(self):
         prompt = build_system_prompt(is_local=False, supports_charts=False)
         assert SYSTEM_PROMPT.split("\n")[0] in prompt
         assert DATA_INTEGRITY_INSTRUCTIONS.strip() in prompt
+        assert SCOPE_INSTRUCTIONS.strip() in prompt
         assert ECHARTS_INSTRUCTIONS.strip() not in prompt
 
     def test_cloud_with_charts_appends_echarts(self):

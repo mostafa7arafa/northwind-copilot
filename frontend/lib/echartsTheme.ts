@@ -48,6 +48,18 @@ export const TRADING_DESK_THEME = {
     symbolSize: 6,
     smooth: true,
   },
+  // Pie/funnel labels sit ON their colored shapes, so ECharts skips the global
+  // textStyle and auto-picks a "contrast" color instead. With a transparent
+  // backgroundColor it assumes a LIGHT canvas and renders dark text with a
+  // white stroke halo. An explicit label color disables that auto logic.
+  pie: {
+    label: { color: "#8a8f9c", fontSize: 11 },
+    labelLine: { lineStyle: { color: "rgba(255,255,255,0.25)" } },
+    itemStyle: { borderColor: "#111318", borderWidth: 2 },
+  },
+  funnel: {
+    label: { color: "#8a8f9c", fontSize: 11 },
+  },
 };
 
 export const THEME_NAME = "trading-desk";
