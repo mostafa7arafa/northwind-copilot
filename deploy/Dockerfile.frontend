@@ -4,16 +4,26 @@
 # slim runtime image (no full node_modules, no build toolchain).
 FROM node:20-slim AS deps
 WORKDIR /app
+# Opt-in escape hatch for TLS-intercepting networks (see Dockerfile.backend).
+# Safe because package-lock.json pins integrity hashes; only the cert check is
+# relaxed. Off by default.
+ARG INSECURE_TLS=""
+RUN if [ -n "$INSECURE_TLS" ]; then npm config set strict-ssl false; fi
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci || npm install
 
 FROM node:20-slim AS builder
 WORKDIR /app
+# Same opt-in as the deps stage. `next/font/google` fetches fonts at build time
+# via Node's own TLS (not npm), so on an intercepting network we also relax
+# Node's cert check for this build step only.
+ARG INSECURE_TLS=""
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend ./
 # NEXT_PUBLIC_* are inlined at build time; the API base is same-origin in prod
 # (Caddy proxies /api/*), so nothing secret is baked in here.
-RUN npm run build
+RUN if [ -n "$INSECURE_TLS" ]; then export NODE_TLS_REJECT_UNAUTHORIZED=0; fi; \
+    npm run build
 
 FROM node:20-slim AS runner
 WORKDIR /app

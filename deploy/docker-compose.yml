@@ -23,6 +23,10 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
+      args:
+        # Set INSECURE_TLS=1 in deploy/.env only if your local network
+        # intercepts TLS and the build fails with certificate errors.
+        INSECURE_TLS: ${INSECURE_TLS:-}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -46,6 +50,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
+      args:
+        INSECURE_TLS: ${INSECURE_TLS:-}
     restart: unless-stopped
     depends_on:
       - backend

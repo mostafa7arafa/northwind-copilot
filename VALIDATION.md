@@ -42,6 +42,15 @@ cp .env.example .env
 docker compose -f docker-compose.yml up --build
 ```
 
+> **If the build fails with certificate errors** (`UnknownIssuer` / `unable to
+> verify the first certificate`), your local network intercepts TLS (corporate
+> proxy or some antivirus). Set `INSECURE_TLS=1` in `deploy/.env` and rebuild —
+> it relaxes the cert check during the build only, and stays safe because the
+> lockfiles pin package hashes. Leave it empty on your production server.
+
+```bash
+```
+
 **Check:**
 - [ ] All four containers start (postgres, backend, frontend, caddy)
 - [ ] Backend logs show `alembic upgrade head` running (creates 8 tables in Postgres — this is the Postgres migration path the tests never exercise)
