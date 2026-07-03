@@ -1,0 +1,106 @@
+"use client";
+
+import { AnimatePresence, motion } from "framer-motion";
+import { MessageSquare, PanelLeftClose, Plus, Trash2 } from "lucide-react";
+import { useStore } from "@/lib/store";
+import { cn } from "@/lib/cn";
+
+/** Session rail: the notebook of past analyses, newest first. */
+export function Sidebar() {
+  const {
+    sessions,
+    currentId,
+    sidebarOpen,
+    toggleSidebar,
+    createSession,
+    selectSession,
+    deleteSession,
+  } = useStore();
+
+  return (
+    <AnimatePresence initial={false}>
+      {sidebarOpen && (
+        <motion.aside
+          initial={{ width: 0, opacity: 0 }}
+          animate={{ width: 256, opacity: 1 }}
+          exit={{ width: 0, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 260, damping: 30 }}
+          className="shrink-0 overflow-hidden border-r border-hairline bg-surface/40"
+        >
+          <div className="flex h-full w-64 flex-col">
+            <div className="flex items-center justify-between px-3 pt-3">
+              <span className="eyebrow">Analyses</span>
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                title="Collapse panel"
+                aria-label="Collapse session panel"
+                className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <PanelLeftClose size={15} />
+              </button>
+            </div>
+            <div className="px-3 pb-3 pt-2">
+              <button
+                type="button"
+                onClick={createSession}
+                className="card-lift flex w-full items-center gap-2 rounded-lg border border-hairline bg-surface px-3 py-2.5 text-[13px] text-ink hover:border-electric/40"
+              >
+                <Plus size={15} className="text-electric" />
+                New analysis
+              </button>
+            </div>
+
+            <div className="eyebrow px-4 pb-1">Sessions</div>
+            <nav className="flex-1 space-y-0.5 overflow-auto px-2 pb-3">
+              {sessions.map((s) => {
+                const on = s.id === currentId;
+                return (
+                  <div
+                    key={s.id}
+                    className={cn(
+                      "group flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
+                      on
+                        ? "bg-surface-2 text-ink"
+                        : "text-ink-dim hover:bg-surface-2/60 hover:text-ink"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectSession(s.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    >
+                      <MessageSquare
+                        size={14}
+                        className={cn("shrink-0", on ? "text-electric" : "text-ink-faint")}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                    </button>
+                    {s.turns.length > 0 && (
+                      <span className="tape text-[11px] text-ink-faint group-hover:hidden">
+                        {s.turns.length}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      title="Delete analysis"
+                      onClick={() => deleteSession(s.id)}
+                      className="hidden shrink-0 rounded p-1 text-ink-faint transition-colors hover:bg-err/15 hover:text-err group-hover:block"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </nav>
+
+            <div className="border-t border-hairline p-3 text-[11px] leading-relaxed text-ink-faint">
+              Local-first analyst. Queries run on your machine unless you switch to a
+              cloud engine.
+            </div>
+          </div>
+        </motion.aside>
+      )}
+    </AnimatePresence>
+  );
+}

@@ -7,6 +7,14 @@ __pycache__/
 *.egg-info/
 dist/
 .pytest_cache/
+.coverage
+htmlcov/
 eval/results/
 .langgraph_api/
 *.log
+
+# web service + frontend
+.user_preferences.json
+frontend/node_modules/
+frontend/.next/
+frontend/out/

@@ -1,129 +1,171 @@
 # Northwind Copilot
 
-A natural-language-to-SQL agent over the classic **Northwind** retail database.
-It runs **local-first** on a small open model and escalates to a frontier model
-only when the local one can't finish a step — so most questions never leave your
-machine, and the hard ones still get answered.
+A **local-first natural-language-to-SQL agent** over the Northwind retail
+database. Ask a question in plain English; the agent lists tables, reads the
+schema, consults an internal knowledge base, writes SQL, runs it, and answers
+with the numbers — never inventing figures.
 
-Built with **LangGraph** + **LangChain v1**, with a RAG layer over internal
-business docs and a benchmark harness that measures accuracy, per-model
-attribution, and latency.
+It runs primarily on a **local Ollama model** and only escalates to a cloud
+model (OpenAI) when the local one fails or returns nothing usable. It ships
+three ways to use it:
+
+- a **LangGraph agent** (`langgraph dev`),
+- a **FastAPI + Next.js web app** — the "Northwind Trading Desk" (see
+  [WEBAPP.md](WEBAPP.md)),
+- a **benchmark harness** that grades the agent against a labelled dataset.
 
 ---
 
-## Why it's interesting
-
-- **Local-first, escalate-on-failure.** Primary model is a local
-  `gemma4-12b` via [Ollama](https://ollama.com/); fallback is OpenAI
-  `gpt-4.1-mini`. Crucially, escalation triggers on **empty/degenerate
-  responses**, not just exceptions — a small local model often *silently*
-  returns nothing on the hardest reasoning step, and the stock
-  `ModelFallbackMiddleware` never catches that.
-- **Hybrid SQL + RAG.** The agent answers questions that require *both*
-  querying the database *and* reading internal policy/KPI docs (e.g. "top
-  customer by gross margin in 2017" needs the margin definition **and** a
-  3-table aggregation).
-- **Measured, not vibes.** Every change is validated against a 10-question
-  benchmark with verified ground truth.
-
 ## Architecture
 
+Everything Python lives in the single package `northwind_copilot/`, split into
+concern-focused layers. Dependencies point **inward**: `web` → `response` →
+`query` → `infra` → `core`; nothing in `core` imports anything above it.
+
 ```
-                    ┌──────────────────────────────────────────┐
-   user question →  │  LangGraph agent (create_agent)          │
-                    │                                          │
-                    │  middleware:                             │
-                    │   • EscalateToFallbackMiddleware ────────┼──► gemma4-12b (local, Ollama)
-                    │     (escalate on error OR empty reply)   │        │ if empty/error
-                    │   • trim_context (8k-token window)       │        ▼
-                    │                                          │     gpt-4.1-mini (OpenAI)
-                    │  tools:                                  │
-                    │   • SQLDatabaseToolkit (list/schema/     ├──► data/northwind.sqlite
-                    │     query/checker)                       │
-                    │   • search_docs (FAISS RAG) ─────────────┼──► docs/*.md
-                    └──────────────────────────────────────────┘
+northwind_copilot/
+├── core/            Business language — no I/O, pure config & text
+│   ├── config.py        env-driven `settings` singleton (frozen dataclass)
+│   ├── definitions.py   REVENUE_SQL, MARGIN_RATE — the KPI source of truth
+│   └── prompts.py       SYSTEM_PROMPT (static) + build_system_prompt (dynamic)
+├── infra/           Adapters to external systems
+│   ├── database.py      SQLDatabase over data/northwind.sqlite
+│   ├── llm.py           primary (Ollama) + optional fallback (OpenAI) factories
+│   ├── rag.py           FAISS index builder over docs/*.md
+│   └── docs_tool.py     the `search_docs` agent tool
+├── query/           Question → running SQL agent
+│   ├── graph.py         composition root; exports `graph` (langgraph.json target)
+│   ├── agent_factory.py per-request engine builder (ollama|openai|openrouter)
+│   └── middleware.py    escalate-on-degenerate + context trimming
+├── response/        Agent output → user-facing answer
+│   ├── charting.py      re-run SQL read-only (run_sql) + infer_chart
+│   └── streaming.py     translate the agent stream into pipeline SSE events
+├── web/             FastAPI service the frontend talks to
+│   ├── app.py           /api/health, /api/models, /api/chat, /api/preferences
+│   ├── models_registry.py  live Ollama + curated cloud model lists
+│   └── preferences.py   free-text analyst preferences persistence
+└── eval/            Benchmark harness
+    ├── graders.py       fuzzy numeric / contains_all / fields / rows graders
+    └── run_benchmark.py runs benchmark_dataset.jsonl, records model & latency
+
+frontend/            Next.js 15 "Trading Desk" UI (see WEBAPP.md)
+docs/                Knowledge base: KPI defs, marketing calendar, policies, catalog
+data/northwind.sqlite  The database (Orders span 2012–2023, not classic 1996–98)
 ```
 
-Key files:
+### Key design decisions
 
-| Path | What |
-|---|---|
-| [`agent/agent.py`](agent/agent.py) | Agent, system prompt, `EscalateToFallbackMiddleware`, context trimming |
-| [`agent/tools/docs_tool.py`](agent/tools/docs_tool.py) | `search_docs` RAG tool |
-| [`agent/rag/retrieval.py`](agent/rag/retrieval.py) | FAISS index build/load over `docs/` |
-| [`docs/`](docs/) | Business knowledge: KPI defs, marketing calendar, product policy, catalog |
-| [`eval/`](eval/) | Benchmark runner + fuzzy graders |
-| [`benchmark_dataset.jsonl`](benchmark_dataset.jsonl) | 10 questions with verified ground truth |
+- **Local-first, escalate-on-empty.** The local model sometimes returns an empty
+  completion on the hardest reasoning steps; the agent loop would read that as
+  "done" and stop silently. `EscalateToFallbackMiddleware` escalates on an
+  exception **or** a degenerate (empty) response — something the stock
+  `ModelFallbackMiddleware` misses.
+- **The cloud fallback is optional.** With no `OPENAI_API_KEY`, the graph still
+  builds and runs entirely on the local model — the escalation simply has no
+  target. (`ChatOpenAI` raises at construction without a key, so the factory
+  returns `None` instead.)
+- **Lean-local / heavy-cloud split (web path).** A slow local model pays real
+  latency for every rule and tool round-trip, so the local prompt is short and
+  drops the LLM-backed SQL query-checker; cloud carries the full prompt and
+  charting instructions. The static benchmark graph is unchanged.
+- **Never invent numbers.** Prompts forbid fabricating figures; an empty result
+  is reported as "no rows", and the web layer suppresses any chart for it.
 
-## Results
-
-Latest benchmark (10 questions: 3 RAG, 3 SQL, 4 hybrid):
-
-| Metric | Value |
-|---|---|
-| Accuracy | **10 / 10** |
-| Ran fully on local gemma | 9–10 / 10 |
-| Escalated to GPT-4.1 | 0–1 / 10 |
-
-The agent keeps almost all work local and only reaches for the frontier model
-on the most complex multi-step query.
+---
 
 ## Setup
 
-**Prerequisites:** Python 3.12, [uv](https://docs.astral.sh/uv/),
-[Ollama](https://ollama.com/), and an OpenAI API key (used for the fallback
-model and for RAG embeddings).
+Requires **Python 3.12+**, [uv](https://docs.astral.sh/uv/), and (for local
+inference) [Ollama](https://ollama.com/) running with at least one model pulled.
 
 ```bash
-# 1. Install dependencies
-uv sync
-
-# 2. Pull the local model (≈7.4 GB)
-ollama pull gemma4-12b      # or point agent/agent.py at any local model you have
-
-# 3. Configure secrets
-cp .env.example .env        # then fill in OPENAI_API_KEY (+ optional LangSmith)
+uv sync --group dev --native-tls      # runtime + test/lint tooling
+cp .env.example .env                  # then edit — see "Configuration" below
 ```
 
-`.env` keys:
+> On this Windows setup, `uv` needs `--native-tls` to reach PyPI.
 
-```
-OPENAI_API_KEY=<your-key>
-LANGSMITH_API_KEY=<your-key>      # optional, for tracing
-LANGCHAIN_TRACING_V2=true         # optional
-LANGCHAIN_PROJECT=northwind-copilot
-REINDEX=true                      # rebuild the FAISS index on next run
-```
+---
 
-## Run
+## Usage
 
-**Interactive (LangGraph dev server):**
+### Run the agent (LangGraph dev server)
 
 ```bash
 uv run langgraph dev
 ```
 
-**Benchmark:**
+`langgraph.json` points at `northwind_copilot/query/graph.py:graph`.
+
+### Run the web app
+
+The full-stack "Trading Desk" (FastAPI backend + Next.js frontend) has its own
+guide: **[WEBAPP.md](WEBAPP.md)**. In short:
 
 ```bash
-PYTHONIOENCODING=utf-8 uv run python -m eval.run_benchmark
-# options: --id <id>  (run one question)   --limit N   --no-save
+# backend (repo root)
+LANGCHAIN_TRACING_V2=false PYTHONIOENCODING=utf-8 \
+  uv run uvicorn northwind_copilot.web.app:app --port 8000
+# frontend (in ./frontend)
+npm install && npm run dev            # http://localhost:3000
 ```
 
-Results are written to `eval/results/latest.json` (plus a timestamped copy).
-`PYTHONIOENCODING=utf-8` is required on Windows because some product/customer
-names contain accented characters (e.g. *Côte de Blaye*).
+### Run the benchmark
 
-## How it works
+```bash
+PYTHONIOENCODING=utf-8 uv run python -m northwind_copilot.eval.run_benchmark
+uv run python -m northwind_copilot.eval.run_benchmark --id sql_employee_count_usa
+uv run python -m northwind_copilot.eval.run_benchmark --limit 3 --no-save
+```
 
-1. The agent searches the docs (RAG) for any KPI / campaign / policy definitions
-   the question references.
-2. It inspects the DB schema (`sql_db_list_tables` → `sql_db_schema`), writes and
-   validates SQL, then executes it.
-3. The local model handles this end-to-end for most questions. If it errors or
-   returns an empty completion, `EscalateToFallbackMiddleware` retries that step
-   on GPT-4.1 and the loop continues.
+Results (accuracy, which model answered, latency) are written to
+`eval/results/latest.json`. Always set `PYTHONIOENCODING=utf-8` — some product
+and customer names carry accented characters that crash the Windows console.
+
+---
+
+## Configuration
+
+All settings resolve from environment variables (loaded from `.env`) with sane
+defaults in [`core/config.py`](northwind_copilot/core/config.py):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PRIMARY_MODEL` | `gemma4-12b` | Local-first Ollama model |
+| `FALLBACK_MODEL` | `gpt-4.1-mini` | Cloud escalation model |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embeddings for RAG |
+| `NORTHWIND_DATABASE_URI` | `sqlite:///data/northwind.sqlite` | The database |
+| `DOCS_DIR` | `docs` | Markdown knowledge base |
+| `FAISS_PATH` | `.faiss_index` | On-disk vector index |
+| `REINDEX` | `false` | Rebuild the FAISS index on next load |
+| `OPENAI_API_KEY` | — | Enables the fallback **and** RAG embeddings |
+
+> **Do not** use `DATABASE_URI` — LangGraph reserves that name for its own
+> persistence layer and overwrites it with `:memory:` under `langgraph dev`.
+> The RAG `search_docs` tool uses OpenAI embeddings, so questions about
+> KPIs/categories/policies need `OPENAI_API_KEY` set even on the local engine.
+
+---
+
+## Development
+
+```bash
+# Test suite (offline — no LLM or network calls)
+uv run pytest
+
+# Coverage (branch coverage; 72%+ per module, ~94% overall)
+uv run pytest --cov --cov-report=term-missing
+
+# Lint gate (run before shipping)
+uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
+```
+
+Every module is unit-tested with fakes so the suite never touches Ollama,
+OpenAI, or the network. `run_sql` and `build_database` run against the real
+`northwind.sqlite` **read-only**.
+
+---
 
 ## License
 
-Personal learning project. Northwind sample data is public-domain.
+Provided as-is for educational and evaluation purposes.
