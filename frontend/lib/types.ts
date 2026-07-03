@@ -40,11 +40,13 @@ export interface TableData {
 // table pair, and a capable cloud model may draw several charts.
 export type ChatEvent =
   | { type: "engine"; engine: Engine; provider: Provider; model: string }
+  | { type: "conversation"; id: string }
   | { type: "stage"; stage: StageId; status: "active" | "done" }
   | { type: "sql"; sql: string; seq?: number }
   | ({ type: "table"; seq?: number } & TableData)
   | { type: "chart"; option: Record<string, unknown>; inferred: boolean; seq?: number }
   | { type: "insights"; text: string; bullets: string[] }
+  | { type: "usage"; credits: number; remaining: number }
   | { type: "final"; text: string }
   | { type: "error"; message: string; detail?: string }
   | { type: "done" };
@@ -103,4 +105,37 @@ export interface Session {
   title: string;
   turns: Turn[];
   createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Hosted (multi-tenant SaaS) types
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  org_id: string;
+  plan: string;
+}
+
+export type DatasetStatus = "processing" | "ready" | "failed";
+
+export interface DatasetMeta {
+  id: string;
+  name: string;
+  source_type: "csv" | "xlsx" | "sqlite";
+  status: DatasetStatus;
+  row_count: number;
+  table_count: number;
+  schema_summary: string;
+  business_context: string;
+  error: string;
+}
+
+export interface ConversationMeta {
+  id: string;
+  title: string;
+  dataset_id: string | null;
+  turn_count: number;
 }

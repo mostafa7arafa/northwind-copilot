@@ -51,10 +51,14 @@ app.add_middleware(
 # hosted mode (the POC frontend never calls them, and they touch the app DB
 # only when invoked).
 from northwind_copilot.auth.router import router as auth_router  # noqa: E402
+from northwind_copilot.conversations.router import (  # noqa: E402
+    router as conversations_router,
+)
 from northwind_copilot.datasets.router import router as datasets_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(datasets_router)
+app.include_router(conversations_router)
 
 
 class Message(BaseModel):
@@ -75,6 +79,9 @@ class ChatRequest(BaseModel):
     # Hosted mode: which uploaded dataset to query. Ignored in the POC (which
     # always queries the configured Northwind database).
     dataset_id: str | None = Field(default=None, max_length=36)
+    # Hosted mode: the conversation to append this turn to (a new one is created
+    # when omitted). Prior history is rebuilt server-side from stored turns.
+    conversation_id: str | None = Field(default=None, max_length=36)
 
 
 class PreferencesRequest(BaseModel):
@@ -188,6 +195,49 @@ async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
         )
 
 
+def _last_question(messages: list[Message]) -> str:
+    """Return the content of the last user message (this turn's question)."""
+    for m in reversed(messages):
+        if m.role == "user":
+            return m.content
+    return ""
+
+
+async def _prepare_conversation(body: ChatRequest, ctx) -> tuple[str, list[dict]]:
+    """Resolve/create the conversation and rebuild history from stored turns.
+
+    Server-owned history closes the client-forged-history hole: only the new
+    question is taken from the request; all prior context comes from the DB.
+
+    Returns:
+        ``(conversation_id, history)``.
+    """
+    from northwind_copilot.conversations.history import build_history
+    from northwind_copilot.conversations.service import ensure_conversation
+    from northwind_copilot.tenancy.db import get_sessionmaker
+
+    question = _last_question(body.messages)
+    async with get_sessionmaker()() as session:
+        try:
+            convo = await ensure_conversation(
+                session,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                dataset_id=body.dataset_id,
+                conversation_id=body.conversation_id,
+                title_hint=question,
+            )
+        except ValueError:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found."
+            )
+        history = build_history(list(convo.turns), question)
+        await session.commit()
+        return convo.id, history
+
+
 @app.post("/api/chat", dependencies=[Depends(rate_limit)])
 async def chat(
     body: ChatRequest,
@@ -196,7 +246,7 @@ async def chat(
     """Stream one analyst turn as Server-Sent Events of pipeline stages.
 
     ``ctx`` is a ``RequestContext`` in hosted mode (used to scope dataset access
-    to the caller's org) or ``None`` in the single-user POC.
+    and persist the conversation) or ``None`` in the single-user POC.
     """
     config = EngineConfig(
         provider=body.provider,
@@ -207,20 +257,75 @@ async def chat(
     fallback = _build_fallback() if config.is_local else None
     dataset = await _resolve_dataset(body.dataset_id, ctx)
 
-    async def event_source() -> AsyncIterator[bytes]:
+    # Hosted mode: server owns history + persistence. POC: client sends history,
+    # nothing is stored.
+    conversation_id: str | None = None
+    if ctx:
+        conversation_id, history = await _prepare_conversation(body, ctx)
+    else:
         history = [m.model_dump() for m in body.messages]
-        async for event in stream_chat(
-            history=history,
-            config=config,
-            user_preferences=prefs,
-            fallback=fallback,
-            session_id=body.session_id,
-            dataset=dataset,
-        ):
-            yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
+
+    async def event_source() -> AsyncIterator[bytes]:
+        recorder = None
+        if ctx:
+            from northwind_copilot.conversations.service import TurnRecorder
+
+            recorder = TurnRecorder()
+            # Tell the client which conversation this turn belongs to.
+            yield (
+                "data: "
+                + json.dumps({"type": "conversation", "id": conversation_id})
+                + "\n\n"
+            ).encode("utf-8")
+        try:
+            async for event in stream_chat(
+                history=history,
+                config=config,
+                user_preferences=prefs,
+                fallback=fallback,
+                session_id=body.session_id,
+                dataset=dataset,
+            ):
+                if recorder is not None:
+                    recorder.observe(event)
+                yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
+        finally:
+            # Persist the turn even on disconnect/timeout (this runs on cancel).
+            if ctx and recorder is not None:
+                await _persist_completed_turn(
+                    conversation_id, _last_question(body.messages), recorder
+                )
 
     return StreamingResponse(
         event_source(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def _persist_completed_turn(
+    conversation_id: str | None, question: str, recorder
+) -> None:
+    """Write the recorded turn to the DB, ignoring persistence failures.
+
+    A DB hiccup here must not surface as a chat failure — the answer already
+    streamed to the user.
+    """
+    if not conversation_id:
+        return
+    from northwind_copilot.conversations.service import persist_turn
+    from northwind_copilot.tenancy.db import get_sessionmaker
+
+    try:
+        async with get_sessionmaker()() as session:
+            await persist_turn(
+                session,
+                conversation_id=conversation_id,
+                question=question,
+                recorder=recorder,
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 - best-effort persistence
+        import logging
+
+        logging.getLogger(__name__).exception("failed to persist turn")

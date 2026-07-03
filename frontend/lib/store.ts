@@ -97,6 +97,10 @@ interface State {
   pinnedTurnId: string | null;
   kbHint: boolean; // radar toggle: nudge the agent to consult the knowledge base
   queryCount: number; // completed analyses — drives the milestone easter egg
+  // Hosted mode: the uploaded dataset to query, and the server-owned
+  // conversation this session maps to (learned from the `conversation` event).
+  activeDatasetId: string | null;
+  conversationId: string | null;
 
   // actions
   init: () => Promise<void>;
@@ -109,6 +113,7 @@ interface State {
   setArtifactWidth: (width: number) => void;
   openSettings: (open: boolean) => void;
   toggleKbHint: () => void;
+  setActiveDataset: (id: string | null) => void;
   createSession: () => void;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => void;
@@ -134,6 +139,8 @@ export const useStore = create<State>()(
       pinnedTurnId: null,
       kbHint: false,
       queryCount: 0,
+      activeDatasetId: null,
+      conversationId: null,
 
       init: async () => {
         if (!get().currentId) set({ currentId: get().sessions[0].id });
@@ -191,6 +198,8 @@ export const useStore = create<State>()(
         set({ artifactWidth: Math.max(380, Math.min(width, 900)) }),
       openSettings: (open) => set({ settingsOpen: open }),
       toggleKbHint: () => set({ kbHint: !get().kbHint }),
+      // Switching dataset starts a fresh server-side conversation.
+      setActiveDataset: (id) => set({ activeDatasetId: id, conversationId: null }),
 
       createSession: () => {
         const s = newSession();
@@ -198,9 +207,11 @@ export const useStore = create<State>()(
           sessions: [s, ...get().sessions].slice(0, MAX_SESSIONS),
           currentId: s.id,
           pinnedTurnId: null,
+          conversationId: null, // a new session is a new server conversation
         });
       },
-      selectSession: (id) => set({ currentId: id, pinnedTurnId: null }),
+      selectSession: (id) =>
+        set({ currentId: id, pinnedTurnId: null, conversationId: null }),
 
       deleteSession: (id) => {
         const remaining = get().sessions.filter((s) => s.id !== id);
@@ -328,10 +339,18 @@ export const useStore = create<State>()(
             provider,
             model,
             apiKey,
+            // Hosted mode: query the active dataset and continue the server-side
+            // conversation. Ignored by the POC backend.
+            datasetId: get().activeDatasetId ?? undefined,
+            conversationId: get().conversationId ?? undefined,
             onEvent: (e) => {
               switch (e.type) {
                 case "engine":
                   patch({ engine: e.engine, provider: e.provider, model: e.model });
+                  break;
+                case "conversation":
+                  // Learn (or confirm) which server conversation this maps to.
+                  set({ conversationId: e.id });
                   break;
                 case "stage":
                   setStage(e.stage, e.status);
@@ -416,6 +435,8 @@ export const useStore = create<State>()(
         artifactWidth: s.artifactWidth,
         kbHint: s.kbHint,
         queryCount: s.queryCount,
+        activeDatasetId: s.activeDatasetId,
+        conversationId: s.conversationId,
       }),
     }
   )

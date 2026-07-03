@@ -4,6 +4,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { MessageSquare, PanelLeftClose, Plus, Trash2 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/cn";
+import { DatasetManager } from "@/components/DatasetManager";
+
+// Hosted build shows the dataset manager (uploads); the POC build queries the
+// fixed Northwind database and hides it.
+const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
 /** Session rail: the notebook of past analyses, newest first. */
 export function Sidebar() {
@@ -15,6 +20,8 @@ export function Sidebar() {
     createSession,
     selectSession,
     deleteSession,
+    activeDatasetId,
+    setActiveDataset,
   } = useStore();
 
   return (
@@ -50,6 +57,15 @@ export function Sidebar() {
                 New analysis
               </button>
             </div>
+
+            {HOSTED && (
+              <div className="border-b border-hairline">
+                <DatasetManager
+                  activeId={activeDatasetId}
+                  onSelect={setActiveDataset}
+                />
+              </div>
+            )}
 
             <div className="eyebrow px-4 pb-1">Sessions</div>
             <nav className="flex-1 space-y-0.5 overflow-auto px-2 pb-3">

@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
     Numeric,
@@ -152,3 +153,65 @@ class Dataset(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, server_default=func.now()
     )
+
+
+class Conversation(Base):
+    """A saved chat thread over one dataset, owned by an org."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    dataset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200), default="New analysis")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        server_default=func.now(),
+        onupdate=_utcnow,
+    )
+
+    turns: Mapped[list["Turn"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="Turn.created_at",
+    )
+
+
+class Turn(Base):
+    """One question/answer exchange, with its artifacts.
+
+    The JSON columns mirror the SSE artifact the frontend already renders:
+    ``queries`` is a list of ``{sql, table}``, ``charts`` a list of ECharts
+    options, ``insights`` a ``{text, bullets}`` object. Storing them means the
+    server owns conversation history (the client no longer supplies it), closing
+    the client-forged-history hole once tokens cost money.
+    """
+
+    __tablename__ = "turns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    question: Mapped[str] = mapped_column(String, default="")
+    answer: Mapped[str] = mapped_column(String, default="")
+    queries: Mapped[list] = mapped_column(JSON, default=list)
+    charts: Mapped[list] = mapped_column(JSON, default=list)
+    insights: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    model: Mapped[str] = mapped_column(String(200), default="")
+    provider: Mapped[str] = mapped_column(String(40), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+    conversation: Mapped[Conversation] = relationship(back_populates="turns")
