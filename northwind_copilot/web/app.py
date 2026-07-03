@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import Depends, FastAPI
@@ -17,16 +18,43 @@ from northwind_copilot.query.agent_factory import EngineConfig, Provider
 from northwind_copilot.response.streaming import stream_chat
 from northwind_copilot.web.models_registry import list_all_providers
 from northwind_copilot.web.preferences import load_preferences, save_preferences
-from northwind_copilot.web.security import rate_limit, require_auth
+from northwind_copilot.web.security import rate_limit, require_access
 
-app = FastAPI(title="Northwind Copilot API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup/shutdown.
+
+    In hosted mode over a local SQLite app DB (dev/test), create the schema on
+    startup so no separate migration step is needed. Production runs Postgres
+    and manages the schema with Alembic, so ``create_all`` is intentionally
+    skipped there to avoid drifting from the migration history.
+    """
+    if settings.hosted_mode and settings.app_db_url.startswith("sqlite"):
+        from northwind_copilot.tenancy.db import create_all
+
+        await create_all()
+    yield
+
+
+app = FastAPI(title="Northwind Copilot API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
+# Identity + dataset routes are always mounted; they are only *reachable* in
+# hosted mode (the POC frontend never calls them, and they touch the app DB
+# only when invoked).
+from northwind_copilot.auth.router import router as auth_router  # noqa: E402
+from northwind_copilot.datasets.router import router as datasets_router  # noqa: E402
+
+app.include_router(auth_router)
+app.include_router(datasets_router)
 
 
 class Message(BaseModel):
@@ -44,6 +72,9 @@ class ChatRequest(BaseModel):
     provider: Provider = "ollama"
     model: str = Field(default=settings.primary_model, max_length=200)
     api_key: str | None = Field(default=None, max_length=512)
+    # Hosted mode: which uploaded dataset to query. Ignored in the POC (which
+    # always queries the configured Northwind database).
+    dataset_id: str | None = Field(default=None, max_length=36)
 
 
 class PreferencesRequest(BaseModel):
@@ -63,19 +94,19 @@ async def health() -> dict:
     return {"ok": True}
 
 
-@app.get("/api/models", dependencies=[Depends(require_auth)])
+@app.get("/api/models", dependencies=[Depends(require_access)])
 async def models() -> dict:
     """List local (Ollama) and cloud (OpenAI/OpenRouter) model choices."""
     return await list_all_providers()
 
 
-@app.get("/api/preferences", dependencies=[Depends(require_auth)])
+@app.get("/api/preferences", dependencies=[Depends(require_access)])
 async def get_preferences() -> dict:
     """Return the saved analyst preferences."""
     return {"preferences": load_preferences()}
 
 
-@app.post("/api/preferences", dependencies=[Depends(require_auth)])
+@app.post("/api/preferences", dependencies=[Depends(require_access)])
 async def put_preferences(body: PreferencesRequest) -> dict:
     """Save analyst preferences that are appended to the system prompt."""
     return {"preferences": save_preferences(body.preferences)}
@@ -116,12 +147,57 @@ def _resolve_api_key(provider: str, browser_key: str | None) -> str | None:
     return os.getenv(env_var) if env_var else None
 
 
-@app.post(
-    "/api/chat",
-    dependencies=[Depends(require_auth), Depends(rate_limit)],
-)
-async def chat(body: ChatRequest) -> StreamingResponse:
-    """Stream one analyst turn as Server-Sent Events of pipeline stages."""
+async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
+    """Load the requested dataset as a ``DatasetContext``, scoped to the org.
+
+    Args:
+        dataset_id: The dataset the caller asked to query, if any.
+        ctx: The request's ``RequestContext`` (hosted mode) or ``None`` (POC).
+
+    Returns:
+        A ``DatasetContext`` when a ready, owned dataset is requested; ``None``
+        for the POC path.
+
+    Raises:
+        HTTPException: 404 if the dataset is missing or not the org's; 409 if it
+            is not finished ingesting.
+    """
+    if not (ctx and dataset_id):
+        return None
+    from fastapi import HTTPException, status
+
+    from northwind_copilot.query.agent_factory import DatasetContext
+    from northwind_copilot.tenancy.db import get_sessionmaker
+    from northwind_copilot.tenancy.models import Dataset
+
+    async with get_sessionmaker()() as session:
+        dataset = await session.get(Dataset, dataset_id)
+        if dataset is None or dataset.org_id != ctx.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
+            )
+        if dataset.status != "ready":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Dataset is still being prepared.",
+            )
+        return DatasetContext(
+            sqlite_path=dataset.file_path,
+            schema_summary=dataset.schema_summary,
+            business_context=dataset.business_context,
+        )
+
+
+@app.post("/api/chat", dependencies=[Depends(rate_limit)])
+async def chat(
+    body: ChatRequest,
+    ctx=Depends(require_access),
+) -> StreamingResponse:
+    """Stream one analyst turn as Server-Sent Events of pipeline stages.
+
+    ``ctx`` is a ``RequestContext`` in hosted mode (used to scope dataset access
+    to the caller's org) or ``None`` in the single-user POC.
+    """
     config = EngineConfig(
         provider=body.provider,
         model=body.model,
@@ -129,6 +205,7 @@ async def chat(body: ChatRequest) -> StreamingResponse:
     )
     prefs = load_preferences()
     fallback = _build_fallback() if config.is_local else None
+    dataset = await _resolve_dataset(body.dataset_id, ctx)
 
     async def event_source() -> AsyncIterator[bytes]:
         history = [m.model_dump() for m in body.messages]
@@ -138,6 +215,7 @@ async def chat(body: ChatRequest) -> StreamingResponse:
             user_preferences=prefs,
             fallback=fallback,
             session_id=body.session_id,
+            dataset=dataset,
         ):
             yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
 

@@ -18,3 +18,9 @@ eval/results/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+
+# SaaS: secrets, app database, and per-tenant dataset files
+deploy/.env
+data/app.sqlite
+data/app.sqlite-*
+data/tenants/

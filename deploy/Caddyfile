@@ -1,0 +1,30 @@
+# Caddy reverse proxy: automatic HTTPS, security headers, and routing.
+#
+# /api/* → FastAPI backend (SSE streaming; buffering disabled).
+# everything else → Next.js frontend.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Security headers — shrink the XSS/clickjacking surface that would
+	# otherwise threaten the httpOnly auth cookie.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
+	# API: proxy to the backend and do NOT buffer — SSE must stream.
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	# Frontend: everything else.
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

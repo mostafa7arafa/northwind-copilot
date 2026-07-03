@@ -130,7 +130,9 @@ class _FakeAgent:
 def _collect_stream(monkeypatch, agent):
     monkeypatch.setattr(streaming, "build_agent_for", lambda config, **kw: agent)
     monkeypatch.setattr(
-        streaming, "run_sql", lambda sql: {"columns": ["x"], "rows": [[1], [2]]}
+        streaming,
+        "run_sql",
+        lambda sql, db_path=None: {"columns": ["x"], "rows": [[1], [2]]},
     )
     monkeypatch.setattr(streaming, "infer_chart", lambda table: {"series": []})
 

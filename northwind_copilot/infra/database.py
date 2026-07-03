@@ -41,8 +41,8 @@ def _readonly_sqlite_creator(path: str) -> Callable[[], sqlite3.Connection]:
     return creator
 
 
-def build_database() -> SQLDatabase:
-    """Connect to the configured database, read-only.
+def build_database(database_uri: str | None = None) -> SQLDatabase:
+    """Connect to a database, read-only.
 
     For a file-backed SQLite database (the default) the connection is opened in
     ``mode=ro`` so the agent's SQL tool cannot mutate the data. For any other
@@ -53,10 +53,16 @@ def build_database() -> SQLDatabase:
     ``sample_rows_in_table_info`` is set from configuration (0 by default) to
     keep the schema description small, since it is re-sent on every agent step.
 
+    Args:
+        database_uri: SQLAlchemy URI to connect to. Defaults to the configured
+            Northwind database (the POC path); the hosted service passes a
+            per-tenant dataset's SQLite URI here.
+
     Returns:
         A configured :class:`~langchain_community.utilities.SQLDatabase`.
     """
-    url = make_url(settings.database_uri)
+    database_uri = database_uri or settings.database_uri
+    url = make_url(database_uri)
     is_sqlite_file = url.get_backend_name() == "sqlite" and url.database not in (
         None,
         "",
@@ -72,6 +78,6 @@ def build_database() -> SQLDatabase:
         )
 
     return SQLDatabase.from_uri(
-        settings.database_uri,
+        database_uri,
         sample_rows_in_table_info=settings.sample_rows_in_table_info,
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from northwind_copilot.core.prompts import (
     DATA_INTEGRITY_INSTRUCTIONS,
     ECHARTS_INSTRUCTIONS,
+    GENERIC_ANALYST_PROMPT,
     INSIGHTS_INSTRUCTIONS,
     LEAN_LOCAL_PROMPT,
     PRESENTATION_INSTRUCTIONS,
@@ -61,3 +62,37 @@ class TestUserPreferences:
             is_local=False, supports_charts=True, user_preferences="   "
         )
         assert "User preferences" not in prompt
+
+
+class TestBuildSystemPromptDataset:
+    def test_dataset_uses_generic_base_not_northwind(self):
+        prompt = build_system_prompt(
+            is_local=False,
+            supports_charts=True,
+            dataset_summary="Table orders (10 rows):\n  - id (INTEGER)",
+            business_context="Revenue = qty * price.",
+        )
+        # Generic analyst base, not the Northwind-specific system prompt.
+        assert GENERIC_ANALYST_PROMPT.split("\n")[0] in prompt
+        assert "Northwind" not in prompt
+        # The dataset's schema summary and business context are injected.
+        assert "Table orders" in prompt
+        assert "Revenue = qty * price." in prompt
+        # Shared instruction blocks still apply.
+        assert DATA_INTEGRITY_INSTRUCTIONS.strip()[:20] in prompt
+        assert ECHARTS_INSTRUCTIONS.strip()[:20] in prompt
+
+    def test_dataset_without_business_context(self):
+        prompt = build_system_prompt(
+            is_local=False,
+            supports_charts=False,
+            dataset_summary="Table t (1 rows):\n  - a (TEXT)",
+        )
+        assert "Business context" not in prompt
+        assert "Table t" in prompt
+
+    def test_none_dataset_preserves_poc_prompt(self):
+        # The POC path (no dataset) must be byte-identical to before.
+        poc = build_system_prompt(is_local=False, supports_charts=True)
+        assert SYSTEM_PROMPT in poc
+        assert "Northwind" in poc

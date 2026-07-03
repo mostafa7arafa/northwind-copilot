@@ -1,0 +1,40 @@
+# Backend image: FastAPI + LangGraph agent, served by uvicorn.
+#
+# Built with uv against the committed uv.lock for reproducible installs. The
+# `web` dependency group carries the runtime web stack (fastapi, uvicorn, the
+# app-DB and dataset-ingestion deps); the base group carries the agent itself.
+FROM python:3.12-slim AS base
+
+# uv: fast, lockfile-driven installs. Pinned copy from the official image.
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Install dependencies first (cached layer) using only the lockfile + manifest.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --group web
+
+# Then the application source.
+COPY northwind_copilot ./northwind_copilot
+COPY data ./data
+COPY docs ./docs
+COPY migrations ./migrations
+COPY alembic.ini langgraph.json ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --group web
+
+ENV PATH="/app/.venv/bin:${PATH}"
+
+# Tenant dataset files and the app DB live on mounted volumes, not in the image.
+RUN mkdir -p /data/tenants
+
+# Apply the latest DB schema (Alembic) before serving. Idempotent: a no-op when
+# the database is already at head.
+EXPOSE 8000
+CMD ["sh", "-c", "alembic upgrade head && uvicorn northwind_copilot.web.app:app --host 0.0.0.0 --port 8000"]

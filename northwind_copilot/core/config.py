@@ -43,6 +43,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Return a boolean environment variable, falling back to a default.
+
+    Truthy values (case-insensitive): ``1``, ``true``, ``yes``, ``on``.
+    """
+    raw = _env(name, "").lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable application settings.
@@ -110,6 +121,29 @@ class Settings:
     turn_deadline_seconds: int = _env_int("TURN_DEADLINE_SECONDS", 120)
     turn_deadline_seconds_cloud: int = _env_int("TURN_DEADLINE_SECONDS_CLOUD", 300)
     query_timeout_seconds: int = _env_int("QUERY_TIMEOUT_SECONDS", 10)
+
+    # --- SaaS / multi-tenant hosting --------------------------------------
+    # When true, the service runs as the hosted product: per-user JWT auth
+    # replaces the shared bearer token, and the local Ollama engine is hidden
+    # from the model registry. When false, behaviour is the single-user POC.
+    hosted_mode: bool = _env_bool("HOSTED_MODE", False)
+    # Application database (users/orgs/datasets/billing). Defaults to a local
+    # SQLite file via the async aiosqlite driver so dev and tests need no
+    # Postgres; production sets APP_DATABASE_URL to a postgresql+asyncpg URL.
+    app_db_url: str = _env("APP_DATABASE_URL", "sqlite+aiosqlite:///data/app.sqlite")
+    # Root directory holding one read-only SQLite file per uploaded dataset,
+    # laid out as {tenant_data_dir}/{org_id}/{dataset_id}.sqlite.
+    tenant_data_dir: str = _env("TENANT_DATA_DIR", "data/tenants")
+    # Secrets. These MUST be overridden in any real deployment; the insecure
+    # defaults exist only so the app boots in local dev and tests.
+    jwt_secret: str = _env("JWT_SECRET", "dev-insecure-jwt-secret-change-me")
+    jwt_expiry_minutes: int = _env_int("JWT_EXPIRY_MINUTES", 60 * 24 * 7)
+    key_encryption_secret: str = _env("KEY_ENCRYPTION_SECRET", "")
+    # Browser origin of the frontend (used for auth cookies and OAuth redirects).
+    frontend_origin: str = _env("FRONTEND_ORIGIN", "http://localhost:3000")
+    # Google OAuth (optional; empty disables the Google sign-in button).
+    google_client_id: str = _env("GOOGLE_CLIENT_ID", "")
+    google_client_secret: str = _env("GOOGLE_CLIENT_SECRET", "")
 
     @property
     def cors_origins_list(self) -> list[str]:

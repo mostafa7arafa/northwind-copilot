@@ -59,11 +59,14 @@ def _deadline_guard(seconds: float):
     return handler
 
 
-def run_sql(sql: str) -> dict[str, Any] | None:
+def run_sql(sql: str, db_path: str | None = None) -> dict[str, Any] | None:
     """Run a read-only SELECT and return structured columns and rows.
 
     Args:
         sql: The SQL statement captured from the agent's query tool call.
+        db_path: Path to the SQLite file to query. Defaults to the configured
+            Northwind database (POC); the hosted service passes the per-tenant
+            dataset's file path.
 
     Returns:
         ``{"columns": [...], "rows": [[...]], "truncated": bool}`` on success,
@@ -71,7 +74,7 @@ def run_sql(sql: str) -> dict[str, Any] | None:
     """
     if not sql:
         return None
-    path = _db_path()
+    path = db_path or _db_path()
     if path is None:
         return None
     cleaned = sql.strip().rstrip(";").strip()

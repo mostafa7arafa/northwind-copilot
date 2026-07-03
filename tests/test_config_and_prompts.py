@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from northwind_copilot.core.config import Settings, _env, settings
+from northwind_copilot.core.config import Settings, _env, _env_bool, settings
 from northwind_copilot.core.definitions import MARGIN_RATE, REVENUE_SQL
 from northwind_copilot.core.prompts import SYSTEM_PROMPT
 
@@ -21,12 +21,35 @@ class TestEnv:
         assert _env("NW_TEST_VAR", "fallback") == "custom"
 
 
+class TestEnvBool:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("NW_TEST_BOOL", raising=False)
+        assert _env_bool("NW_TEST_BOOL", True) is True
+        assert _env_bool("NW_TEST_BOOL", False) is False
+
+    def test_truthy_values(self, monkeypatch):
+        for v in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("NW_TEST_BOOL", v)
+            assert _env_bool("NW_TEST_BOOL", False) is True
+
+    def test_falsey_values(self, monkeypatch):
+        for v in ("0", "false", "no", "off", "nonsense"):
+            monkeypatch.setenv("NW_TEST_BOOL", v)
+            assert _env_bool("NW_TEST_BOOL", True) is False
+
+
 class TestSettings:
     def test_defaults(self):
         assert settings.primary_model == "gemma4-12b"
         assert settings.fallback_model == "gpt-4.1-mini"
         assert settings.temperature == 0.0
         assert settings.sample_rows_in_table_info == 0
+
+    def test_saas_defaults_are_poc_safe(self):
+        # Out of the box the app is the single-user POC, not the hosted product.
+        assert settings.hosted_mode is False
+        assert settings.tenant_data_dir == "data/tenants"
+        assert settings.app_db_url.startswith("sqlite+aiosqlite:///")
 
     def test_is_frozen(self):
         import dataclasses

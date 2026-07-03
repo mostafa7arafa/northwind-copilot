@@ -21,7 +21,11 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from northwind_copilot.core.config import settings
-from northwind_copilot.query.agent_factory import EngineConfig, build_agent_for
+from northwind_copilot.query.agent_factory import (
+    DatasetContext,
+    EngineConfig,
+    build_agent_for,
+)
 from northwind_copilot.response.charting import infer_chart, run_sql
 
 logger = logging.getLogger(__name__)
@@ -177,6 +181,7 @@ async def stream_chat(
     user_preferences: str,
     fallback: Any | None = None,
     session_id: str | None = None,
+    dataset: DatasetContext | None = None,
 ) -> AsyncIterator[dict]:
     """Run the agent for one turn and yield structured pipeline events.
 
@@ -187,6 +192,8 @@ async def stream_chat(
         fallback: Optional escalation model for a local primary.
         session_id: The browser session id. Attached as run metadata so
             LangSmith groups every turn of a conversation into one thread.
+        dataset: The uploaded dataset to query (hosted mode). When ``None`` the
+            agent runs against the configured Northwind database (POC).
 
     Yields:
         Event dicts: ``engine``, ``stage``, ``sql``, ``table``, ``chart``,
@@ -204,7 +211,10 @@ async def stream_chat(
         yield ev
 
     agent = build_agent_for(
-        config, user_preferences=user_preferences, fallback=fallback
+        config,
+        user_preferences=user_preferences,
+        fallback=fallback,
+        dataset=dataset,
     )
 
     captured_queries: list[str] = []  # every distinct query executed, in order
@@ -232,8 +242,9 @@ async def stream_chat(
         # the same seq as its sql event. A query that errors (or isn't a SELECT)
         # simply yields no table for that seq.
         tables: list[dict[str, Any] | None] = []
+        db_path = dataset.sqlite_path if dataset else None
         for seq, query in enumerate(captured_queries):
-            table = run_sql(query)
+            table = run_sql(query, db_path)
             tables.append(table)
             if table is not None:
                 for ev in rail.advance_to("results"):

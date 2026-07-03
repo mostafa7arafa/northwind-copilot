@@ -18,7 +18,7 @@ import hmac
 import time
 from collections import defaultdict, deque
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Cookie, Header, HTTPException, Request, status
 
 from northwind_copilot.core.config import settings
 
@@ -104,3 +104,48 @@ async def rate_limit(request: Request) -> None:
     """
     client_id = request.client.host if request.client else "unknown"
     _limiter.check(client_id)
+
+
+async def require_access(
+    nw_session: str | None = Cookie(default=None),
+    authorization: str | None = Header(default=None),
+):
+    """Mode-aware access guard for the protected API.
+
+    * **Hosted mode** (``settings.hosted_mode``): resolve the httpOnly session
+      cookie to a user and their org, returning a ``RequestContext`` the route
+      can authorise data access against.
+    * **POC mode**: fall back to the optional shared bearer token and return
+      ``None`` (there is no tenant).
+
+    Imports of the tenancy layer are deferred so the POC path never touches the
+    application database (nor creates its file).
+
+    Returns:
+        A ``RequestContext`` in hosted mode, else ``None``.
+
+    Raises:
+        HTTPException: 401 when authentication is required and fails.
+    """
+    if not settings.hosted_mode:
+        await require_auth(authorization)
+        return None
+
+    from northwind_copilot.auth.service import read_session_token
+    from northwind_copilot.tenancy.db import get_sessionmaker
+    from northwind_copilot.tenancy.deps import load_context
+    from northwind_copilot.tenancy.models import User
+
+    unauth = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
+    )
+    if not nw_session:
+        raise unauth
+    user_id = read_session_token(nw_session)
+    if not user_id:
+        raise unauth
+    async with get_sessionmaker()() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            raise unauth
+        return await load_context(session, user_id)

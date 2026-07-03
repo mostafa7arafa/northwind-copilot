@@ -1,0 +1,27 @@
+# Frontend image: Next.js 15 built to a standalone server bundle.
+#
+# Multi-stage: install deps, build, then copy only the standalone output into a
+# slim runtime image (no full node_modules, no build toolchain).
+FROM node:20-slim AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci || npm install
+
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend ./
+# NEXT_PUBLIC_* are inlined at build time; the API base is same-origin in prod
+# (Caddy proxies /api/*), so nothing secret is baked in here.
+RUN npm run build
+
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=3000
+# Standalone output bundles a minimal server.js + traced node_modules.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+EXPOSE 3000
+CMD ["node", "server.js"]
