@@ -46,8 +46,25 @@ const applyDeskTheme = (monaco: {
 export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
   const [expanded, setExpanded] = useState(false);
   const [full, setFull] = useState(false);
+  // Monaco's real content height accounts for word-wrapped long lines, which a
+  // raw newline count misses — a two-line-but-very-long query still needs room.
+  const [contentH, setContentH] = useState(0);
   const lines = sql.split("\n").length;
-  const height = expanded ? Math.min(lines * 20 + 24, 520) : Math.min(lines * 20 + 24, 200);
+  const natural = contentH > 0 ? contentH + 8 : lines * 20 + 24;
+  const height = expanded
+    ? Math.min(Math.max(natural, 240), 600)
+    : Math.min(natural, 200);
+
+  /** Register the theme and start tracking content height (recomputes on wrap). */
+  const onEditorMount = (
+    editor: { onDidContentSizeChange: (cb: () => void) => void; getContentHeight: () => number },
+    monaco: Parameters<typeof applyDeskTheme>[0]
+  ) => {
+    applyDeskTheme(monaco);
+    const sync = () => setContentH(editor.getContentHeight());
+    editor.onDidContentSizeChange(sync);
+    sync();
+  };
 
   return (
     <Panel
@@ -88,7 +105,7 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
           value={sql}
           options={EDITOR_OPTIONS}
           loading={<div className="p-4 text-[12px] text-ink-faint">Loading editor…</div>}
-          onMount={(_e, monaco) => applyDeskTheme(monaco)}
+          onMount={onEditorMount}
         />
       </div>
 

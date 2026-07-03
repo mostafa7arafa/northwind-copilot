@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from eval.graders import (
+from northwind_copilot.eval.graders import (
     grade,
     grade_contains_all,
     grade_fields,

@@ -5,12 +5,16 @@ These tests use lightweight fakes so no real LLM is invoked.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langchain_core.messages import AIMessage
 
-from northwind_copilot.application.middleware import (
+from northwind_copilot.query.middleware import (
     EscalateToFallbackMiddleware,
     is_degenerate,
+    make_trim_context,
+    trim_context,
 )
 
 
@@ -106,3 +110,43 @@ class TestEscalation:
 
         with pytest.raises(RuntimeError):
             self._run({"primary": boom, "fb": boom}, "fb")
+
+
+class TestAsyncEscalation:
+    def _run(self, behaviors, *fallbacks):
+        mw = EscalateToFallbackMiddleware(*fallbacks)
+
+        async def handler(req):
+            return behaviors[req.model]()
+
+        return asyncio.run(mw.awrap_model_call(FakeRequest(), handler))
+
+    def test_async_primary_success(self):
+        out = self._run({"primary": lambda: FakeResponse([_ai("ok")])}, "fb")
+        assert out.result[-1].content == "ok"
+
+    def test_async_empty_primary_escalates(self):
+        behaviors = {
+            "primary": lambda: FakeResponse([_ai("")]),
+            "fb": lambda: FakeResponse([_ai("rescued")]),
+        }
+        assert self._run(behaviors, "fb").result[-1].content == "rescued"
+
+    def test_async_all_raise_reraises(self):
+        def boom():
+            raise RuntimeError("down")
+
+        with pytest.raises(RuntimeError):
+            self._run({"primary": boom, "fb": boom}, "fb")
+
+
+class TestTrimContext:
+    def test_make_trim_context_trims_to_budget(self):
+        mw = make_trim_context(40)
+        state = {"messages": [_ai("word " * 40) for _ in range(6)]}
+        out = mw.before_model(state, None)
+        assert "messages" in out
+        assert len(out["messages"]) <= len(state["messages"])
+
+    def test_module_default_instance_exists(self):
+        assert hasattr(trim_context, "before_model")

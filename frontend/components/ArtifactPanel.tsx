@@ -2,8 +2,10 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
+import { useState } from "react";
 import type { Turn } from "@/lib/types";
 import { useStore } from "@/lib/store";
+import { cn } from "@/lib/cn";
 import { ChartCard } from "./ChartCard";
 import { ResultsTable } from "./ResultsTable";
 import { SqlCard } from "./SqlCard";
@@ -15,9 +17,29 @@ const hasArtifact = (t: Turn) => !!(t.sql || t.table || t.chart);
  * the chart live here (not in the chat thread) so the conversation stays a clean
  * Q&A. Follows the pinned turn, else the latest turn that is producing output. */
 export function ArtifactPanel() {
-  const { sessions, currentId, pinnedTurnId, pinTurn } = useStore();
+  const { sessions, currentId, pinnedTurnId, pinTurn, artifactWidth, setArtifactWidth } =
+    useStore();
   const session = sessions.find((s) => s.id === currentId);
   const turns = session?.turns ?? [];
+
+  // Drag the left edge to resize. While dragging we suppress the spring so the
+  // panel tracks the pointer 1:1; on release the spring resumes for open/close.
+  const [dragging, setDragging] = useState(false);
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const startX = e.clientX;
+    const startW = artifactWidth;
+    const onMove = (ev: PointerEvent) =>
+      setArtifactWidth(startW + (startX - ev.clientX));
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   // Pinned turn wins; otherwise track the most recent turn with (or building)
   // an artifact, so the panel streams the live answer as it arrives.
@@ -40,12 +62,23 @@ export function ArtifactPanel() {
       {show && focus && (
         <motion.aside
           initial={{ width: 0, opacity: 0 }}
-          animate={{ width: 460, opacity: 1 }}
+          animate={{ width: artifactWidth, opacity: 1 }}
           exit={{ width: 0, opacity: 0 }}
-          transition={{ type: "spring", stiffness: 240, damping: 30 }}
-          className="hidden shrink-0 overflow-hidden border-l border-hairline bg-surface/30 lg:block"
+          transition={
+            dragging ? { duration: 0 } : { type: "spring", stiffness: 240, damping: 30 }
+          }
+          className="relative hidden shrink-0 overflow-hidden border-l border-hairline bg-surface/30 lg:block"
         >
-          <div className="flex h-full w-[460px] flex-col">
+          {/* Left-edge resize handle */}
+          <div
+            onPointerDown={startResize}
+            title="Drag to resize"
+            className={cn(
+              "absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize transition-colors hover:bg-electric/40",
+              dragging && "bg-electric/50"
+            )}
+          />
+          <div className="flex h-full flex-col" style={{ width: artifactWidth }}>
             <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
               <div className="min-w-0">
                 <div className="eyebrow">

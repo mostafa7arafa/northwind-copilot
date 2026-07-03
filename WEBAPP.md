@@ -19,12 +19,12 @@ browser only).
 ## Architecture
 
 ```
-frontend/  Next.js 15 · React 19 · Tailwind v4 · Framer Motion · TanStack Table
-           · Monaco (SQL) · Apache ECharts · Zustand
-server/    FastAPI wrapping the existing LangGraph agent (northwind_copilot):
-           GET  /api/models        local + cloud model registry
-           POST /api/chat          SSE stream of pipeline events
-           GET/POST /api/preferences
+frontend/                   Next.js 15 · React 19 · Tailwind v4 · Framer Motion
+                            · TanStack Table · Monaco (SQL) · ECharts · Zustand
+northwind_copilot/web/      FastAPI wrapping the LangGraph agent:
+                            GET  /api/models        local + cloud model registry
+                            POST /api/chat          SSE stream of pipeline events
+                            GET/POST /api/preferences
 ```
 
 The frontend proxies `/api/*` to the backend (see `frontend/next.config.mjs`),
@@ -38,7 +38,7 @@ so streaming isn't buffered and the browser sees one origin.
 uv sync --group web --native-tls          # first time only
 # tracing off avoids noisy LangSmith calls if you don't use it
 LANGCHAIN_TRACING_V2=false PYTHONIOENCODING=utf-8 \
-  .venv/Scripts/python.exe -m uvicorn server.app:app --port 8000
+  .venv/Scripts/python.exe -m uvicorn northwind_copilot.web.app:app --port 8000
 ```
 
 **2. Frontend** (in another terminal):

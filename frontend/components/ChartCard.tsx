@@ -23,6 +23,34 @@ const TYPES: { id: ChartType; label: string; Icon: typeof BarChart3 }[] = [
   { id: "pie", label: "Pie", Icon: PieChart },
 ];
 
+/**
+ * Long category labels (employee names, product titles) overlap and get dropped
+ * in the narrow panel. Force every tick to render and rotate them when they're
+ * long or numerous, and let the grid grow to contain the angled text. Fullscreen
+ * has room to spare, but the rotation is harmless there too.
+ */
+function tuneAxes(opt: Record<string, any>) {
+  const axes: any[] = Array.isArray(opt.xAxis)
+    ? opt.xAxis
+    : opt.xAxis
+    ? [opt.xAxis]
+    : [];
+  for (const axis of axes) {
+    if (!axis || axis.type === "value") continue;
+    const cats: string[] = axis.data ?? [];
+    const longish =
+      cats.length > 6 || cats.some((c) => String(c).length > 8);
+    axis.axisLabel = {
+      ...(axis.axisLabel ?? {}),
+      interval: 0,
+      rotate: longish ? 32 : 0,
+      hideOverlap: false,
+    };
+  }
+  if (axes.length) opt.grid = { ...(opt.grid ?? {}), containLabel: true };
+  return opt;
+}
+
 /** Reshape the agent's cartesian option into the selected chart type. */
 function morph(base: Record<string, any>, type: ChartType): Record<string, any> {
   const opt = structuredClone(base);
@@ -55,7 +83,7 @@ function morph(base: Record<string, any>, type: ChartType): Record<string, any> 
     smooth: type !== "bar",
     areaStyle: type === "area" ? { opacity: 0.18 } : undefined,
   }));
-  return opt;
+  return tuneAxes(opt);
 }
 
 /** A chart that morphs between bar / line / area / pie, with export + fullscreen. */

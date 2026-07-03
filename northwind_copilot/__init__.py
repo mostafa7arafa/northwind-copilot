@@ -1,13 +1,17 @@
 """Northwind Copilot — a local-first natural-language-to-SQL agent.
 
-The package is organised in domain-driven layers:
+The whole project lives in this one package, split into concern-focused layers:
 
-* :mod:`northwind_copilot.domain` — business language: KPI/revenue definitions
-  and the analyst system prompt.
-* :mod:`northwind_copilot.application` — orchestration: the agent graph and the
-  middleware that governs model fallback and context trimming.
-* :mod:`northwind_copilot.infrastructure` — adapters to external systems: the
-  LLMs, the SQL database, the vector store, and the document-search tool.
+* :mod:`northwind_copilot.core` — business language: settings, KPI/revenue
+  definitions, and every analyst prompt (static and request-scoped).
+* :mod:`northwind_copilot.infra` — adapters to external systems: the LLMs, the
+  SQL database, the vector store, and the ``search_docs`` tool.
+* :mod:`northwind_copilot.query` — turning a question into a running SQL agent:
+  the static graph, the per-request engine builder, and the middleware.
+* :mod:`northwind_copilot.response` — turning agent output into the answer: a
+  clean result table, an inferred chart, and the streamed pipeline events.
+* :mod:`northwind_copilot.web` — the FastAPI service the frontend talks to.
+* :mod:`northwind_copilot.eval` — the benchmark harness and its graders.
 """
 
 from __future__ import annotations

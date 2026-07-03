@@ -7,6 +7,8 @@ __pycache__/
 *.egg-info/
 dist/
 .pytest_cache/
+.coverage
+htmlcov/
 eval/results/
 .langgraph_api/
 *.log

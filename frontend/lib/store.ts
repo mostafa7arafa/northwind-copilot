@@ -80,6 +80,7 @@ interface State {
   currentId: string;
   // ui
   sidebarOpen: boolean;
+  artifactWidth: number; // right-docked workspace width, drag-resizable
   settingsOpen: boolean;
   pinnedTurnId: string | null;
   kbHint: boolean; // radar toggle: nudge the agent to consult the knowledge base
@@ -93,6 +94,7 @@ interface State {
   setKey: (provider: "openai" | "openrouter", value: string) => void;
   setPreferences: (text: string) => Promise<void>;
   toggleSidebar: () => void;
+  setArtifactWidth: (width: number) => void;
   openSettings: (open: boolean) => void;
   toggleKbHint: () => void;
   createSession: () => void;
@@ -115,6 +117,7 @@ export const useStore = create<State>()(
       sessions: [newSession()],
       currentId: "",
       sidebarOpen: true,
+      artifactWidth: 460,
       settingsOpen: false,
       pinnedTurnId: null,
       kbHint: false,
@@ -172,6 +175,8 @@ export const useStore = create<State>()(
         set({ preferences: saved });
       },
       toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
+      setArtifactWidth: (width) =>
+        set({ artifactWidth: Math.max(380, Math.min(width, 900)) }),
       openSettings: (open) => set({ settingsOpen: open }),
       toggleKbHint: () => set({ kbHint: !get().kbHint }),
 
@@ -362,6 +367,7 @@ export const useStore = create<State>()(
         sessions: s.sessions,
         currentId: s.currentId,
         sidebarOpen: s.sidebarOpen,
+        artifactWidth: s.artifactWidth,
         kbHint: s.kbHint,
         queryCount: s.queryCount,
       }),

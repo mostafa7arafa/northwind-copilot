@@ -1,14 +1,21 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { MessageSquare, Plus, Trash2 } from "lucide-react";
+import { MessageSquare, PanelLeftClose, Plus, Trash2 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/cn";
 
 /** Session rail: the notebook of past analyses, newest first. */
 export function Sidebar() {
-  const { sessions, currentId, sidebarOpen, createSession, selectSession, deleteSession } =
-    useStore();
+  const {
+    sessions,
+    currentId,
+    sidebarOpen,
+    toggleSidebar,
+    createSession,
+    selectSession,
+    deleteSession,
+  } = useStore();
 
   return (
     <AnimatePresence initial={false}>
@@ -21,7 +28,19 @@ export function Sidebar() {
           className="shrink-0 overflow-hidden border-r border-hairline bg-surface/40"
         >
           <div className="flex h-full w-64 flex-col">
-            <div className="p-3">
+            <div className="flex items-center justify-between px-3 pt-3">
+              <span className="eyebrow">Analyses</span>
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                title="Collapse panel"
+                aria-label="Collapse session panel"
+                className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <PanelLeftClose size={15} />
+              </button>
+            </div>
+            <div className="px-3 pb-3 pt-2">
               <button
                 type="button"
                 onClick={createSession}

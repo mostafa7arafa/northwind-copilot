@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from northwind_copilot.config import Settings, _env, settings
-from northwind_copilot.domain.definitions import MARGIN_RATE, REVENUE_SQL
-from northwind_copilot.domain.prompts import SYSTEM_PROMPT
+from northwind_copilot.core.config import Settings, _env, settings
+from northwind_copilot.core.definitions import MARGIN_RATE, REVENUE_SQL
+from northwind_copilot.core.prompts import SYSTEM_PROMPT
 
 
 class TestEnv:
