@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from pathlib import Path
+import time
 from typing import Any
+
+from sqlalchemy.engine.url import make_url
 
 from northwind_copilot.core.config import settings
 
@@ -22,11 +24,39 @@ _MAX_ROWS = 500
 _NUMERIC = (int, float)
 
 
-def _db_path() -> Path:
-    """Resolve the on-disk SQLite path from the configured URI."""
-    uri = settings.database_uri
-    path = uri.replace("sqlite:///", "").replace("sqlite://", "")
-    return Path(path)
+def _db_path() -> str | None:
+    """Resolve the on-disk SQLite path from the configured URI.
+
+    Returns:
+        The database file path, or ``None`` when the configured backend is not
+        a file-backed SQLite database (in which case direct re-execution here
+        does not apply).
+    """
+    url = make_url(settings.database_uri)
+    if url.get_backend_name() != "sqlite":
+        return None
+    return url.database or None
+
+
+def _deadline_guard(seconds: float):
+    """Build a SQLite progress handler that aborts a query past a time budget.
+
+    SQLite calls the handler periodically during execution; returning non-zero
+    raises ``sqlite3.OperationalError`` and unwinds the query. This bounds a
+    pathological (e.g. accidental cartesian) query so it can't pin a core.
+
+    Args:
+        seconds: The wall-clock budget for the query.
+
+    Returns:
+        A zero-arg callable suitable for ``connection.set_progress_handler``.
+    """
+    deadline = time.monotonic() + seconds
+
+    def handler() -> int:
+        return 1 if time.monotonic() > deadline else 0
+
+    return handler
 
 
 def run_sql(sql: str) -> dict[str, Any] | None:
@@ -37,9 +67,12 @@ def run_sql(sql: str) -> dict[str, Any] | None:
 
     Returns:
         ``{"columns": [...], "rows": [[...]], "truncated": bool}`` on success,
-        or ``None`` if the statement is empty, non-SELECT, or errors.
+        or ``None`` if the statement is empty, non-SELECT, times out, or errors.
     """
     if not sql:
+        return None
+    path = _db_path()
+    if path is None:
         return None
     cleaned = sql.strip().rstrip(";").strip()
     # Strip a stray markdown fence if one slipped through.
@@ -48,8 +81,14 @@ def run_sql(sql: str) -> dict[str, Any] | None:
         return None
 
     try:
-        conn = sqlite3.connect(f"file:{_db_path()}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
+            # Abort the query if it runs past the configured budget. The count
+            # is how many VM instructions between handler calls — small enough
+            # to react promptly, large enough not to dominate runtime.
+            conn.set_progress_handler(
+                _deadline_guard(settings.query_timeout_seconds), 10_000
+            )
             cursor = conn.execute(cleaned)
             columns = [c[0] for c in cursor.description or []]
             raw = cursor.fetchmany(_MAX_ROWS + 1)

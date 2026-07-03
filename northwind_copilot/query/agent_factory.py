@@ -74,7 +74,11 @@ def build_model(config: EngineConfig) -> BaseChatModel:
     if config.provider == "ollama":
         from langchain_ollama import ChatOllama
 
-        return ChatOllama(model=config.model, temperature=settings.temperature)
+        return ChatOllama(
+            model=config.model,
+            temperature=settings.temperature,
+            base_url=settings.ollama_base_url,
+        )
 
     if config.provider == "openai":
         from langchain_openai import ChatOpenAI

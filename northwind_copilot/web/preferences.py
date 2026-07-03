@@ -8,6 +8,7 @@ appended to the system prompt on every request (see
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 # preferences.py lives at <repo>/northwind_copilot/web/, so the repo root — where
@@ -39,8 +40,10 @@ def save_preferences(text: str) -> str:
         The saved text (trimmed).
     """
     trimmed = (text or "").strip()
-    _STORE.write_text(
-        json.dumps({"preferences": trimmed}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps({"preferences": trimmed}, ensure_ascii=False, indent=2)
+    # Write to a temp file in the same directory, then atomically replace, so a
+    # concurrent save (or a crash mid-write) can never leave a truncated file.
+    tmp = _STORE.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, _STORE)
     return trimmed

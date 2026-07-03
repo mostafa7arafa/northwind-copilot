@@ -11,7 +11,9 @@ import os
 
 import httpx
 
-OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+from northwind_copilot.core.config import settings
+
+OLLAMA_TAGS_URL = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
 
 # Curated cloud defaults. The frontend also allows a free-typed model id.
 CURATED_OPENAI = [
