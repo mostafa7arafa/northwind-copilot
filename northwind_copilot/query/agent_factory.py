@@ -105,26 +105,37 @@ def build_model(config: EngineConfig) -> BaseChatModel:
             base_url=settings.ollama_base_url,
         )
 
-    if config.provider == "openai":
+    if config.provider in _CLOUD_PROVIDERS:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(
-            model=config.model,
-            temperature=settings.temperature,
-            api_key=config.api_key,
-        )
-
-    if config.provider == "openrouter":
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
-            model=config.model,
-            temperature=settings.temperature,
-            api_key=config.api_key,
-            base_url=OPENROUTER_BASE_URL,
-        )
+        kwargs: dict = {
+            "model": config.model,
+            "temperature": settings.temperature,
+            "api_key": config.api_key,
+        }
+        if config.provider == "openrouter":
+            kwargs["base_url"] = OPENROUTER_BASE_URL
+        kwargs.update(_insecure_http_clients())
+        return ChatOpenAI(**kwargs)
 
     raise ValueError(f"Unknown provider: {config.provider!r}")
+
+
+def _insecure_http_clients() -> dict:
+    """Return http client kwargs that skip TLS verification, or ``{}``.
+
+    Only active when ``settings.insecure_tls`` is set — a dev-only escape hatch
+    for TLS-intercepting networks. In every normal deployment this returns an
+    empty dict and the default, verifying clients are used.
+    """
+    if not settings.insecure_tls:
+        return {}
+    import httpx
+
+    return {
+        "http_client": httpx.Client(verify=False),
+        "http_async_client": httpx.AsyncClient(verify=False),
+    }
 
 
 def build_agent_for(

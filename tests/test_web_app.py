@@ -118,10 +118,12 @@ def test_resolve_api_key_prefers_browser_key(monkeypatch):
 
 
 def test_resolve_api_key_refuses_server_key_on_open_deployment(monkeypatch):
-    # No auth token configured (open deployment) → never spend the server's key
-    # for a caller who didn't bring their own. settings is a frozen dataclass,
-    # so replace the module-level name rather than mutating it.
-    monkeypatch.setattr(app_module, "settings", SimpleNamespace(auth_token=""))
+    # Anonymous open POC (not hosted, no auth token) → never spend the server's
+    # key for a caller who didn't bring their own. settings is a frozen
+    # dataclass, so replace the module-level name rather than mutating it.
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="")
+    )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
     assert app_module._resolve_api_key("openai", None) is None
 
@@ -129,6 +131,18 @@ def test_resolve_api_key_refuses_server_key_on_open_deployment(monkeypatch):
 def test_resolve_api_key_allows_server_key_when_gated(monkeypatch):
     # With an auth token set, callers are trusted, so the server key may back
     # a request that omits a browser key.
-    monkeypatch.setattr(app_module, "settings", SimpleNamespace(auth_token="tok"))
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="tok")
+    )
     monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
     assert app_module._resolve_api_key("openai", None) == "sk-server"
+
+
+def test_resolve_api_key_uses_server_key_in_hosted_mode(monkeypatch):
+    # Hosted mode: callers are authenticated users, so the server's metered key
+    # backs their turns even without a per-request key.
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=True, auth_token="")
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-server")
+    assert app_module._resolve_api_key("openrouter", None) == "sk-or-server"

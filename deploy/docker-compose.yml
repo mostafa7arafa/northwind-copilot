@@ -43,6 +43,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Dev-only: skip TLS verification on outbound LLM calls for
+      # TLS-intercepting networks. Leave empty in production.
+      INSECURE_TLS: ${INSECURE_TLS:-}
     volumes:
       - tenant_data:/data/tenants
 
@@ -52,6 +55,9 @@ services:
       dockerfile: deploy/Dockerfile.frontend
       args:
         INSECURE_TLS: ${INSECURE_TLS:-}
+        # Bake hosted mode into the bundle so the auth gate + dataset manager
+        # are active. This is the hosted product build.
+        NEXT_PUBLIC_HOSTED_MODE: "true"
     restart: unless-stopped
     depends_on:
       - backend

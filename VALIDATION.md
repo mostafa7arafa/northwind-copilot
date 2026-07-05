@@ -42,14 +42,13 @@ cp .env.example .env
 docker compose -f docker-compose.yml up --build
 ```
 
-> **If the build fails with certificate errors** (`UnknownIssuer` / `unable to
-> verify the first certificate`), your local network intercepts TLS (corporate
-> proxy or some antivirus). Set `INSECURE_TLS=1` in `deploy/.env` and rebuild —
-> it relaxes the cert check during the build only, and stays safe because the
-> lockfiles pin package hashes. Leave it empty on your production server.
-
-```bash
-```
+> **TLS-intercepting network (corporate proxy / antivirus)?** If the build
+> fails with certificate errors (`UnknownIssuer`), or chat turns fail with
+> `CERTIFICATE_VERIFY_FAILED` / "analyst service unreachable", set
+> `INSECURE_TLS=1` in `deploy/.env`. This relaxes cert verification for the
+> Docker build **and** for the backend's outbound LLM calls at runtime. It is a
+> dev-only escape hatch — leave it empty on a real server (a proper fix is to
+> mount your network's root CA into the containers instead).
 
 **Check:**
 - [ ] All four containers start (postgres, backend, frontend, caddy)

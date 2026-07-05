@@ -21,7 +21,11 @@ ARG INSECURE_TLS=""
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend ./
 # NEXT_PUBLIC_* are inlined at build time; the API base is same-origin in prod
-# (Caddy proxies /api/*), so nothing secret is baked in here.
+# (Caddy proxies /api/*), so nothing secret is baked in here. HOSTED_MODE turns
+# on the auth gate + dataset manager, so it MUST be present during the build —
+# a runtime env var would be ignored by the already-built bundle.
+ARG NEXT_PUBLIC_HOSTED_MODE=""
+ENV NEXT_PUBLIC_HOSTED_MODE=$NEXT_PUBLIC_HOSTED_MODE
 RUN if [ -n "$INSECURE_TLS" ]; then export NODE_TLS_REJECT_UNAUTHORIZED=0; fi; \
     npm run build
 

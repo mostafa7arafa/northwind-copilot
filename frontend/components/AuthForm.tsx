@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 import { ApiError, authApi } from "@/lib/api";
@@ -10,7 +9,6 @@ import { ApiError, authApi } from "@/lib/api";
  * the app root; the httpOnly session cookie is set by the backend.
  */
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -26,8 +24,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     try {
       if (isSignup) await authApi.signup(email, password, name);
       else await authApi.login(email, password);
-      router.push("/");
-      router.refresh();
+      // Hard navigation (not router.push) so the middleware re-runs with the
+      // freshly-set session cookie and the app shell loads cleanly.
+      window.location.assign("/");
     } catch (err) {
       setError(
         err instanceof ApiError

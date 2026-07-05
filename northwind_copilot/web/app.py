@@ -144,9 +144,11 @@ def _resolve_api_key(provider: str, browser_key: str | None) -> str | None:
     """
     if browser_key:
         return browser_key
-    if not settings.auth_token:
-        # Open deployment: never spend the server's own key for a caller who
-        # didn't bring one. (Local Ollama needs no key and is unaffected.)
+    # Use the server's own key only for *trusted* callers: authenticated
+    # hosted-mode users, or a shared-token deployment. An anonymous open POC
+    # deployment never spends the operator's key for a caller who didn't bring
+    # one. (Local Ollama needs no key and is unaffected.)
+    if not (settings.hosted_mode or settings.auth_token):
         return None
     env_var = {"openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}.get(
         provider, ""
@@ -212,9 +214,12 @@ async def _prepare_conversation(body: ChatRequest, ctx) -> tuple[str, list[dict]
     Returns:
         ``(conversation_id, history)``.
     """
+    from sqlalchemy import select
+
     from northwind_copilot.conversations.history import build_history
     from northwind_copilot.conversations.service import ensure_conversation
     from northwind_copilot.tenancy.db import get_sessionmaker
+    from northwind_copilot.tenancy.models import Turn
 
     question = _last_question(body.messages)
     async with get_sessionmaker()() as session:
@@ -233,7 +238,21 @@ async def _prepare_conversation(body: ChatRequest, ctx) -> tuple[str, list[dict]
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found."
             )
-        history = build_history(list(convo.turns), question)
+        # Query turns explicitly rather than touching the lazy `convo.turns`
+        # relationship, which would trigger a lazy load in async context
+        # (sqlalchemy MissingGreenlet).
+        turns = (
+            (
+                await session.execute(
+                    select(Turn)
+                    .where(Turn.conversation_id == convo.id)
+                    .order_by(Turn.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        history = build_history(list(turns), question)
         await session.commit()
         return convo.id, history
 

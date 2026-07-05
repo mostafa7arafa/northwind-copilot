@@ -150,17 +150,27 @@ export const useStore = create<State>()(
             fetchPreferences(),
           ]);
           set({ registry, preferences });
-          // Default the model to the first available option for the engine.
           const s = get();
-          if (!s.model) {
-            if (s.engine === "local" && registry.local.models[0]) {
-              set({ provider: "ollama", model: registry.local.models[0].id });
-            } else if (registry.cloud[0]?.models[0]) {
-              set({
-                provider: registry.cloud[0].provider,
-                model: registry.cloud[0].models[0].id,
-              });
-            }
+          // If the local engine isn't available (always the case in the hosted
+          // product — no Ollama), force the cloud engine so requests don't go
+          // to a non-existent local daemon.
+          const localUsable = registry.local.available && s.engine === "local";
+          // Prefer a cloud provider the server already has a key for (no BYOK
+          // needed), e.g. our OpenRouter key in the hosted product.
+          const cloud =
+            registry.cloud.find((c) => !c.needs_key) ?? registry.cloud[0];
+          if (!localUsable && cloud?.models[0]) {
+            const cloudDefault = cloud.models[0].id;
+            // Coming from the local engine, a persisted model id is an Ollama
+            // model — reset to a cloud model so requests don't fail.
+            const keepModel = s.engine === "cloud" && s.model;
+            set({
+              engine: "cloud",
+              provider: cloud.provider,
+              model: keepModel || cloudDefault,
+            });
+          } else if (!s.model && registry.local.models[0]) {
+            set({ provider: "ollama", model: registry.local.models[0].id });
           }
         } catch {
           /* backend offline; UI still renders */

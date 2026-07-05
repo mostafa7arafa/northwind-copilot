@@ -144,6 +144,10 @@ class Settings:
     # Google OAuth (optional; empty disables the Google sign-in button).
     google_client_id: str = _env("GOOGLE_CLIENT_ID", "")
     google_client_secret: str = _env("GOOGLE_CLIENT_SECRET", "")
+    # Dev-only escape hatch for TLS-intercepting networks (corporate proxy /
+    # antivirus): skip cert verification on outbound LLM API calls. NEVER set
+    # this on a real deployment — it disables HTTPS trust for provider calls.
+    insecure_tls: bool = _env_bool("INSECURE_TLS", False)
 
     @property
     def cors_origins_list(self) -> list[str]:
