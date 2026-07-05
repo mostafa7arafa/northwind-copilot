@@ -12,10 +12,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -137,6 +139,45 @@ def _parse_final(content: str) -> dict[str, Any]:
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
 
     return {"prose": body, "bullets": bullets, "charts": charts}
+
+
+@lru_cache(maxsize=1)
+def _langsmith_client():
+    """Build (once) the LangSmith client used for tracing, or ``None``.
+
+    Tracing is opt-in via ``LANGSMITH_API_KEY``. We construct the client
+    explicitly rather than relying on ``LANGSMITH_TRACING`` env auto-tracing so
+    the ``insecure_tls`` escape hatch (TLS-intercepting networks) can apply to
+    trace uploads too — otherwise every upload dies on cert verification and
+    no runs ever appear.
+    """
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return None
+    try:
+        from langsmith import Client
+
+        kwargs: dict[str, Any] = {}
+        if settings.insecure_tls:
+            import requests
+
+            session = requests.Session()
+            session.verify = False
+            kwargs["session"] = session
+        return Client(**kwargs)
+    except Exception:  # noqa: BLE001 - tracing must never break chat
+        logger.exception("LangSmith client init failed; tracing disabled")
+        return None
+
+
+def _tracing_callbacks() -> list:
+    """Return a per-request LangSmith tracer, or an empty list."""
+    client = _langsmith_client()
+    if client is None:
+        return []
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    project = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT")
+    return [LangChainTracer(client=client, project_name=project)]
 
 
 class _Rail:
@@ -292,8 +333,15 @@ async def stream_chat(
 
     # LangSmith groups runs into a thread when a run carries a `session_id`
     # (or `thread_id`/`conversation_id`) metadata key. Without this, each turn
-    # is a standalone trace and the Threads view stays empty.
-    run_config = {"metadata": {"session_id": session_id}} if session_id else None
+    # is a standalone trace and the Threads view stays empty. The explicit
+    # tracer callback (rather than LANGSMITH_TRACING auto-tracing) lets trace
+    # uploads honor `insecure_tls` on TLS-intercepting networks.
+    run_config: dict[str, Any] = {}
+    if session_id:
+        run_config["metadata"] = {"session_id": session_id}
+    tracers = _tracing_callbacks()
+    if tracers:
+        run_config["callbacks"] = tracers
 
     # Cloud turns get a larger budget: a multi-query, multi-chart analysis
     # legitimately runs past the local cutoff, and the SSE heartbeat keeps the
@@ -310,7 +358,7 @@ async def stream_chat(
         stream = agent.astream(
             {"messages": _to_messages(history)},
             stream_mode="updates",
-            config=run_config,
+            config=run_config or None,
         )
         async for kind, update in _iter_with_heartbeat(
             stream.__aiter__(), _HEARTBEAT_SECONDS

@@ -107,7 +107,9 @@ summary + the business-context box. If answers are weak, edit the dataset's
 - **Billing / plans / credits** — no metering or payment yet (Phase 1–2). Everyone is effectively unlimited; there's a hard 25 MB upload cap in code.
 - **BYOK key storage** — the per-user encrypted key store is Phase 1. Today the server's `OPENROUTER_API_KEY` serves all hosted turns.
 - **Google OAuth** — endpoints not wired yet; email+password only.
-- **Backups, Sentry, rate-limit-by-user, LangSmith/Langfuse** — Phase 1 ops.
+- **Backups, Sentry, rate-limit-by-user** — Phase 1 ops. (LangSmith tracing IS
+  wired: set `LANGSMITH_API_KEY` in `deploy/.env` and every agent turn is
+  traced — works even with `INSECURE_TLS=1`.)
 - **Dataset schema LLM enrichment** — only the mechanical schema summary is generated so far (the `describe` hook exists, unused).
 
 ## If something breaks

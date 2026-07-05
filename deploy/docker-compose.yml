@@ -43,6 +43,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # LangSmith tracing (optional). Set the API key to record every agent
+      # turn; the backend builds the tracer itself (works with INSECURE_TLS).
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
       # Dev-only: skip TLS verification on outbound LLM calls for
       # TLS-intercepting networks. Leave empty in production.
       INSECURE_TLS: ${INSECURE_TLS:-}

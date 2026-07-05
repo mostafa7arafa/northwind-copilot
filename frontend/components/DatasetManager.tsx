@@ -1,5 +1,6 @@
 "use client";
 
+import { Database, Unplug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, datasetsApi } from "@/lib/api";
 import type { DatasetMeta } from "@/lib/types";
@@ -14,7 +15,7 @@ export function DatasetManager({
   onSelect,
 }: {
   activeId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
 }) {
   const [datasets, setDatasets] = useState<DatasetMeta[]>([]);
   const [error, setError] = useState("");
@@ -51,8 +52,12 @@ export function DatasetManager({
 
   async function onDelete(id: string) {
     await datasetsApi.remove(id);
+    // Deleting the connected dataset disconnects it (back to the sample DB).
+    if (id === activeId) onSelect(null);
     await refresh();
   }
+
+  const active = datasets.find((d) => d.id === activeId) ?? null;
 
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -70,11 +75,43 @@ export function DatasetManager({
           type="file"
           accept=".csv,.tsv,.xlsx,.xls,.sqlite,.sqlite3,.db"
           className="hidden"
+          aria-label="Upload dataset file"
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) onUpload(f);
           }}
         />
+      </div>
+
+      {/* What the analyst is connected to right now. Questions always run
+          against exactly one source: the selected dataset, or the built-in
+          sample database when nothing is selected. */}
+      <div className="rounded-[var(--radius-card)] border border-hairline bg-surface px-2.5 py-2">
+        <div className="flex items-center gap-1.5 text-[12.5px] text-ink">
+          <Database size={13} className="shrink-0 text-electric" />
+          <span className="eyebrow">Connected to</span>
+        </div>
+        {active ? (
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="truncate text-[12.5px] text-ink" title={active.name}>
+              {active.name}
+              <span className="text-ink-dim"> · {active.row_count} rows</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onSelect(null)}
+              className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-dim transition-colors hover:bg-surface-2 hover:text-[var(--color-err)]"
+              title="Disconnect this dataset (questions will use the sample database)"
+            >
+              <Unplug size={11} /> Disconnect
+            </button>
+          </div>
+        ) : (
+          <p className="mt-1 text-[11.5px] leading-relaxed text-ink-dim">
+            Sample database (Northwind demo). Upload and select your own data to
+            chat with it instead.
+          </p>
+        )}
       </div>
 
       {error && <p className="text-xs text-[var(--color-err)]">{error}</p>}

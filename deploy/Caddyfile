@@ -15,7 +15,11 @@
 		# Next.js injects inline bootstrap/hydration scripts, so script-src needs
 		# 'unsafe-inline'. (A stricter per-request nonce CSP via Next middleware
 		# is the hardening follow-up; the session cookie is httpOnly regardless.)
-		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		# cdn.jsdelivr.net + worker-src blob: are for the Monaco SQL editor,
+		# which @monaco-editor/react loads from that CDN at runtime (scripts,
+		# CSS, the codicon font, and blob-wrapped workers). Self-hosting Monaco
+		# is the follow-up that removes the CDN from this policy.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; worker-src 'self' blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
 	}
 

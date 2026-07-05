@@ -1,9 +1,12 @@
 "use client";
 
-import { PanelLeft, Settings2 } from "lucide-react";
+import { LogOut, PanelLeft, Settings2 } from "lucide-react";
+import { authApi } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { EnginePicker } from "./EnginePicker";
 import { BrandMark } from "./BrandMark";
+
+const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
 /** Top bar: sidebar toggle, wordmark, the engine dashboard, and settings. */
 export function Header() {
@@ -44,6 +47,20 @@ export function Header() {
         >
           <Settings2 size={17} />
         </button>
+        {HOSTED && (
+          <button
+            type="button"
+            onClick={async () => {
+              await authApi.logout();
+              window.location.assign("/login");
+            }}
+            className="rounded-md p-2 text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut size={17} />
+          </button>
+        )}
       </div>
     </header>
   );
