@@ -17,7 +17,11 @@ def build_primary_model() -> BaseChatModel:
     Returns:
         A deterministic (``temperature=0``) Ollama chat model.
     """
-    return ChatOllama(model=settings.primary_model, temperature=settings.temperature)
+    return ChatOllama(
+        model=settings.primary_model,
+        temperature=settings.temperature,
+        base_url=settings.ollama_base_url,
+    )
 
 
 def build_fallback_model() -> BaseChatModel | None:

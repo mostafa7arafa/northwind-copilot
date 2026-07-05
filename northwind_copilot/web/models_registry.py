@@ -11,7 +11,9 @@ import os
 
 import httpx
 
-OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+from northwind_copilot.core.config import settings
+
+OLLAMA_TAGS_URL = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
 
 # Curated cloud defaults. The frontend also allows a free-typed model id.
 CURATED_OPENAI = [
@@ -64,26 +66,30 @@ async def list_all_providers() -> dict:
     Returns:
         A dict keyed by provider with ``available`` flags and model lists.
     """
-    ollama = await list_ollama_models()
+    # The hosted product has no local Ollama daemon — inference is cloud-only
+    # (our metered OpenRouter key or BYOK). Don't probe or offer local there.
+    ollama = [] if settings.hosted_mode else await list_ollama_models()
+    openai = {
+        "provider": "openai",
+        "label": "OpenAI",
+        # A browser key is only *needed* when the server has none in env.
+        "needs_key": not bool(os.getenv("OPENAI_API_KEY")),
+        "models": CURATED_OPENAI,
+    }
+    openrouter = {
+        "provider": "openrouter",
+        "label": "OpenRouter",
+        "needs_key": not bool(os.getenv("OPENROUTER_API_KEY")),
+        "models": CURATED_OPENROUTER,
+    }
+    # The hosted product meters inference through OpenRouter (our key), so make
+    # it the default there; the POC leaves OpenAI first.
+    cloud = [openrouter, openai] if settings.hosted_mode else [openai, openrouter]
     return {
         "local": {
             "provider": "ollama",
             "available": bool(ollama),
             "models": ollama,
         },
-        "cloud": [
-            {
-                "provider": "openai",
-                "label": "OpenAI",
-                # A browser key is only *needed* when the server has none in env.
-                "needs_key": not bool(os.getenv("OPENAI_API_KEY")),
-                "models": CURATED_OPENAI,
-            },
-            {
-                "provider": "openrouter",
-                "label": "OpenRouter",
-                "needs_key": not bool(os.getenv("OPENROUTER_API_KEY")),
-                "models": CURATED_OPENROUTER,
-            },
-        ],
+        "cloud": cloud,
     }

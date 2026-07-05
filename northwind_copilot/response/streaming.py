@@ -2,8 +2,9 @@
 
 The frontend renders each assistant turn as a pipeline (Understand -> SQL ->
 Execute -> Results -> Chart -> Insights). This module runs the agent and, as
-tool calls and messages arrive, yields the events that drive that rail, plus the
-final SQL, result table, chart spec, and insights.
+tool calls and messages arrive, yields the events that drive that rail, plus
+every executed SQL statement with its result table, the chart specs (a capable
+cloud model may draw several), and insights.
 """
 
 from __future__ import annotations
@@ -11,13 +12,22 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import time
+import uuid
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from northwind_copilot.query.agent_factory import EngineConfig, build_agent_for
+from northwind_copilot.core.config import settings
+from northwind_copilot.query.agent_factory import (
+    DatasetContext,
+    EngineConfig,
+    build_agent_for,
+)
 from northwind_copilot.response.charting import infer_chart, run_sql
 
 logger = logging.getLogger(__name__)
@@ -90,23 +100,27 @@ def _to_messages(history: list[dict]) -> list[BaseMessage]:
 
 
 def _parse_final(content: str) -> dict[str, Any]:
-    """Split a final answer into prose, insight bullets, and an ECharts option.
+    """Split a final answer into prose, insight bullets, and ECharts options.
+
+    A capable cloud model may draw several charts in one turn (one fenced
+    ``echarts`` block per view); every valid block is kept, in order.
 
     Args:
         content: The assistant's final message text.
 
     Returns:
-        ``{"prose", "bullets", "chart"}`` where chart is an option dict or None.
+        ``{"prose", "bullets", "charts"}`` where charts is a list of option
+        dicts (empty when the model drew none).
     """
-    chart: dict[str, Any] | None = None
+    charts: list[dict[str, Any]] = []
     body = content or ""
 
-    match = _ECHARTS_RE.search(body)
-    if match:
+    for match in _ECHARTS_RE.finditer(body):
         try:
-            chart = json.loads(match.group(1))
+            charts.append(json.loads(match.group(1)))
         except json.JSONDecodeError:
-            chart = None
+            continue
+    if _ECHARTS_RE.search(body):
         body = _ECHARTS_RE.sub("", body).strip()
 
     bullets: list[str] = []
@@ -124,7 +138,46 @@ def _parse_final(content: str) -> dict[str, Any]:
     body = _MD_TABLE_ROW_RE.sub("", body)
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
 
-    return {"prose": body, "bullets": bullets, "chart": chart}
+    return {"prose": body, "bullets": bullets, "charts": charts}
+
+
+@lru_cache(maxsize=1)
+def _langsmith_client():
+    """Build (once) the LangSmith client used for tracing, or ``None``.
+
+    Tracing is opt-in via ``LANGSMITH_API_KEY``. We construct the client
+    explicitly rather than relying on ``LANGSMITH_TRACING`` env auto-tracing so
+    the ``insecure_tls`` escape hatch (TLS-intercepting networks) can apply to
+    trace uploads too — otherwise every upload dies on cert verification and
+    no runs ever appear.
+    """
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return None
+    try:
+        from langsmith import Client
+
+        kwargs: dict[str, Any] = {}
+        if settings.insecure_tls:
+            import requests
+
+            session = requests.Session()
+            session.verify = False
+            kwargs["session"] = session
+        return Client(**kwargs)
+    except Exception:  # noqa: BLE001 - tracing must never break chat
+        logger.exception("LangSmith client init failed; tracing disabled")
+        return None
+
+
+def _tracing_callbacks() -> list:
+    """Return a per-request LangSmith tracer, or an empty list."""
+    client = _langsmith_client()
+    if client is None:
+        return []
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    project = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT")
+    return [LangChainTracer(client=client, project_name=project)]
 
 
 class _Rail:
@@ -169,6 +222,7 @@ async def stream_chat(
     user_preferences: str,
     fallback: Any | None = None,
     session_id: str | None = None,
+    dataset: DatasetContext | None = None,
 ) -> AsyncIterator[dict]:
     """Run the agent for one turn and yield structured pipeline events.
 
@@ -179,6 +233,8 @@ async def stream_chat(
         fallback: Optional escalation model for a local primary.
         session_id: The browser session id. Attached as run metadata so
             LangSmith groups every turn of a conversation into one thread.
+        dataset: The uploaded dataset to query (hosted mode). When ``None`` the
+            agent runs against the configured Northwind database (POC).
 
     Yields:
         Event dicts: ``engine``, ``stage``, ``sql``, ``table``, ``chart``,
@@ -196,28 +252,121 @@ async def stream_chat(
         yield ev
 
     agent = build_agent_for(
-        config, user_preferences=user_preferences, fallback=fallback
+        config,
+        user_preferences=user_preferences,
+        fallback=fallback,
+        dataset=dataset,
     )
 
-    captured_sql = ""  # from the query tool (authoritative)
+    captured_queries: list[str] = []  # every distinct query executed, in order
     checker_sql = ""  # from the checker tool (fallback, same `query` arg)
-    sql_emitted = False
     final_content = ""
+
+    async def emit_artifacts() -> AsyncIterator[dict]:
+        """Emit sql/table/chart/insights events from whatever was captured.
+
+        Shared by the success path and the timeout path, so a turn cut short
+        by the deadline still shows every query that completed instead of
+        discarding the work.
+        """
+        parsed = _parse_final(final_content)
+
+        # Prefer executed queries; fall back to the checked query if the model
+        # produced a final answer without a distinct query tool call.
+        if not captured_queries and checker_sql:
+            for ev in rail.advance_to("sql"):
+                yield ev
+            captured_queries.append(checker_sql)
+            yield {"type": "sql", "sql": checker_sql, "seq": 0}
+
+        # Re-run every captured query so each gets a structured table, keyed by
+        # the same seq as its sql event. A query that errors (or isn't a SELECT)
+        # simply yields no table for that seq.
+        tables: list[dict[str, Any] | None] = []
+        db_path = dataset.sqlite_path if dataset else None
+        for seq, query in enumerate(captured_queries):
+            table = run_sql(query, db_path)
+            tables.append(table)
+            if table is not None:
+                for ev in rail.advance_to("results"):
+                    yield ev
+                yield {"type": "table", "seq": seq, **table}
+
+        has_rows = any(t and t["rows"] for t in tables)
+
+        # Only chart real data. If no executed SQL returned rows, suppress any
+        # charts the model drew — their values would be fabricated (see the
+        # data-integrity rule in northwind_copilot.core.prompts).
+        charts: list[dict[str, Any]] = parsed["charts"] if has_rows else []
+        inferred = False
+        if not charts and has_rows:
+            # Local (and chart-less cloud) turns: derive one chart server-side
+            # from the last table that has rows.
+            last = next((t for t in reversed(tables) if t and t["rows"]), None)
+            derived = infer_chart(last) if last else None
+            if derived is not None:
+                charts = [derived]
+                inferred = True
+        if charts:
+            for ev in rail.advance_to("chart"):
+                yield ev
+            for seq, chart in enumerate(charts):
+                yield {
+                    "type": "chart",
+                    "option": chart,
+                    "inferred": inferred,
+                    "seq": seq,
+                }
+            for ev in rail.finish("chart"):
+                yield ev
+
+        if parsed["prose"] or parsed["bullets"]:
+            for ev in rail.advance_to("insights"):
+                yield ev
+            yield {
+                "type": "insights",
+                "text": parsed["prose"],
+                "bullets": parsed["bullets"],
+            }
+            for ev in rail.finish("insights"):
+                yield ev
 
     # LangSmith groups runs into a thread when a run carries a `session_id`
     # (or `thread_id`/`conversation_id`) metadata key. Without this, each turn
-    # is a standalone trace and the Threads view stays empty.
-    run_config = {"metadata": {"session_id": session_id}} if session_id else None
+    # is a standalone trace and the Threads view stays empty. The explicit
+    # tracer callback (rather than LANGSMITH_TRACING auto-tracing) lets trace
+    # uploads honor `insecure_tls` on TLS-intercepting networks.
+    run_config: dict[str, Any] = {}
+    if session_id:
+        run_config["metadata"] = {"session_id": session_id}
+    tracers = _tracing_callbacks()
+    if tracers:
+        run_config["callbacks"] = tracers
+
+    # Cloud turns get a larger budget: a multi-query, multi-chart analysis
+    # legitimately runs past the local cutoff, and the SSE heartbeat keeps the
+    # connection warm the whole time. Local keeps the tight budget — a stuck
+    # small model should be cut promptly.
+    deadline_budget = (
+        settings.turn_deadline_seconds
+        if config.is_local
+        else settings.turn_deadline_seconds_cloud
+    )
+    deadline = time.monotonic() + deadline_budget
 
     try:
         stream = agent.astream(
             {"messages": _to_messages(history)},
             stream_mode="updates",
-            config=run_config,
+            config=run_config or None,
         )
         async for kind, update in _iter_with_heartbeat(
             stream.__aiter__(), _HEARTBEAT_SECONDS
         ):
+            if time.monotonic() > deadline:
+                # Bound one turn's wall-clock so a stuck model (or a runaway
+                # tool loop) can't hold a worker and stream forever.
+                raise TimeoutError(f"turn exceeded {deadline_budget}s budget")
             if kind == "ping":
                 # Keeps the SSE socket warm while the model thinks; the client
                 # has no handler for this type, so it's a harmless no-op there.
@@ -236,12 +385,19 @@ async def stream_chat(
                             for ev in rail.advance_to("sql"):
                                 yield ev
                         elif name == _QUERY_TOOL:
-                            captured_sql = args.get("query", captured_sql)
+                            query = args.get("query", "")
                             for ev in rail.advance_to("sql"):
                                 yield ev
-                            if captured_sql and not sql_emitted:
-                                sql_emitted = True
-                                yield {"type": "sql", "sql": captured_sql}
+                            # A complex turn may run several queries (one per
+                            # view); emit each distinct one so the client can
+                            # show every statement, not just the last.
+                            if query and query not in captured_queries:
+                                captured_queries.append(query)
+                                yield {
+                                    "type": "sql",
+                                    "sql": query,
+                                    "seq": len(captured_queries) - 1,
+                                }
                             for ev in rail.advance_to("execute"):
                                 yield ev
 
@@ -260,50 +416,11 @@ async def stream_chat(
                     ):
                         final_content = str(msg.content)
 
-        # ---- assemble the artifact from what we captured -------------------
+        # ---- assemble the artifacts from what we captured ------------------
+        async for ev in emit_artifacts():
+            yield ev
+
         parsed = _parse_final(final_content)
-
-        # Prefer the executed query; fall back to the checked query if the model
-        # produced a final answer without a distinct query tool call.
-        final_sql = captured_sql or checker_sql
-        if final_sql and not sql_emitted:
-            for ev in rail.advance_to("sql"):
-                yield ev
-            yield {"type": "sql", "sql": final_sql}
-
-        table = run_sql(final_sql)
-        has_rows = bool(table and table["rows"])
-        if table is not None:
-            for ev in rail.advance_to("results"):
-                yield ev
-            yield {"type": "table", **table}
-
-        # Only chart real data. If the executed SQL returned no rows, suppress any
-        # chart the model drew — its values would be fabricated (see the
-        # data-integrity rule in northwind_copilot.core.prompts).
-        chart = (parsed["chart"] or infer_chart(table)) if has_rows else None
-        if chart is not None:
-            for ev in rail.advance_to("chart"):
-                yield ev
-            yield {
-                "type": "chart",
-                "option": chart,
-                "inferred": bool(parsed["chart"] is None),
-            }
-            for ev in rail.finish("chart"):
-                yield ev
-
-        if parsed["prose"] or parsed["bullets"]:
-            for ev in rail.advance_to("insights"):
-                yield ev
-            yield {
-                "type": "insights",
-                "text": parsed["prose"],
-                "bullets": parsed["bullets"],
-            }
-            for ev in rail.finish("insights"):
-                yield ev
-
         yield {"type": "final", "text": parsed["prose"] or final_content}
 
     except asyncio.CancelledError:
@@ -318,20 +435,42 @@ async def stream_chat(
         )
         raise
 
+    except TimeoutError:
+        logger.warning(
+            "stream_chat timed out for provider=%s model=%s after %ss",
+            config.provider,
+            config.model,
+            deadline_budget,
+        )
+        # Salvage rather than discard: the queries that already executed still
+        # yield real tables (and possibly an inferred chart), so the user sees
+        # the partial analysis alongside the timeout notice.
+        async for ev in emit_artifacts():
+            yield ev
+        yield {
+            "type": "error",
+            "message": "The analysis hit its time budget and was stopped "
+            "early — showing what completed. Try a narrower question or a "
+            "faster engine for the rest.",
+            "detail": "timeout",
+        }
+
     except Exception as exc:  # noqa: BLE001 - surface a clean error to the client
-        # Log the full traceback server-side: the generic client message and the
-        # SSE `detail` field are easy to miss, and upstream (e.g. OpenAI) errors
-        # raised mid-stream may never reach LangSmith.
+        # Log the full traceback server-side with a correlation id, and hand the
+        # client only that id — raw exception text can leak connection URIs,
+        # file paths, and request fragments on a public deployment.
+        error_id = uuid.uuid4().hex[:12]
         logger.exception(
-            "stream_chat failed for provider=%s model=%s: %s",
+            "stream_chat failed [%s] for provider=%s model=%s: %s",
+            error_id,
             config.provider,
             config.model,
             exc,
         )
         yield {
             "type": "error",
-            "message": "The query couldn't be completed.",
-            "detail": str(exc),
+            "message": "The query couldn't be completed. Please try again.",
+            "detail": f"error_id={error_id}",
         }
 
     yield {"type": "done"}

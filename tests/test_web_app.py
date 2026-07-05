@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -43,7 +45,36 @@ def test_put_preferences(monkeypatch):
     monkeypatch.setattr(app_module, "save_preferences", _save)
     resp = client.post("/api/preferences", json={"preferences": "  hi  "})
     assert resp.json() == {"preferences": "hi"}
-    assert captured["text"] == "  hi  "
+    # The request model strips at the boundary, so save receives clean text.
+    assert captured["text"] == "hi"
+
+
+def test_put_preferences_rejects_oversized(monkeypatch):
+    monkeypatch.setattr(app_module, "save_preferences", lambda t: t)
+    from northwind_copilot.core.config import settings
+
+    resp = client.post(
+        "/api/preferences",
+        json={"preferences": "x" * (settings.max_preferences_chars + 1)},
+    )
+    assert resp.status_code == 422
+
+
+def test_chat_rejects_unknown_provider():
+    resp = client.post(
+        "/api/chat",
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "provider": "definitely-not-a-provider",
+            "model": "x",
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_chat_rejects_empty_messages():
+    resp = client.post("/api/chat", json={"messages": [], "provider": "ollama"})
+    assert resp.status_code == 422
 
 
 def test_chat_streams_events(monkeypatch):
@@ -79,3 +110,39 @@ def test_build_fallback_respects_key(monkeypatch, has_key):
     else:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         assert app_module._build_fallback() is None
+
+
+def test_resolve_api_key_prefers_browser_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
+    assert app_module._resolve_api_key("openai", "sk-browser") == "sk-browser"
+
+
+def test_resolve_api_key_refuses_server_key_on_open_deployment(monkeypatch):
+    # Anonymous open POC (not hosted, no auth token) → never spend the server's
+    # key for a caller who didn't bring their own. settings is a frozen
+    # dataclass, so replace the module-level name rather than mutating it.
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="")
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
+    assert app_module._resolve_api_key("openai", None) is None
+
+
+def test_resolve_api_key_allows_server_key_when_gated(monkeypatch):
+    # With an auth token set, callers are trusted, so the server key may back
+    # a request that omits a browser key.
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="tok")
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
+    assert app_module._resolve_api_key("openai", None) == "sk-server"
+
+
+def test_resolve_api_key_uses_server_key_in_hosted_mode(monkeypatch):
+    # Hosted mode: callers are authenticated users, so the server's metered key
+    # backs their turns even without a per-request key.
+    monkeypatch.setattr(
+        app_module, "settings", SimpleNamespace(hosted_mode=True, auth_token="")
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-server")
+    assert app_module._resolve_api_key("openrouter", None) == "sk-or-server"

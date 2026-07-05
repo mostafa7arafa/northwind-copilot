@@ -1,11 +1,135 @@
-import type { ChatEvent, ModelRegistry, Provider } from "./types";
+import type {
+  ChatEvent,
+  ConversationMeta,
+  DatasetMeta,
+  ModelRegistry,
+  Provider,
+  User,
+} from "./types";
+
+// All requests include cookies so the httpOnly session travels with them.
+const withCreds: RequestInit = { credentials: "include" };
+
+/** Thrown for non-2xx API responses, carrying the status and server detail. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function json<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
 
 /** Fetch the local + cloud model registry. */
 export async function fetchModels(): Promise<ModelRegistry> {
-  const res = await fetch("/api/models", { cache: "no-store" });
+  const res = await fetch("/api/models", { cache: "no-store", ...withCreds });
   if (!res.ok) throw new Error("Couldn't load models");
   return res.json();
 }
+
+// --- Auth ----------------------------------------------------------------
+
+export const authApi = {
+  async signup(email: string, password: string, name = ""): Promise<User> {
+    return json<User>(
+      await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+        ...withCreds,
+      })
+    );
+  },
+  async login(email: string, password: string): Promise<User> {
+    return json<User>(
+      await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+        ...withCreds,
+      })
+    );
+  },
+  async logout(): Promise<void> {
+    await fetch("/api/auth/logout", { method: "POST", ...withCreds });
+  },
+  /** Return the signed-in user, or null when unauthenticated. */
+  async me(): Promise<User | null> {
+    const res = await fetch("/api/auth/me", { cache: "no-store", ...withCreds });
+    if (res.status === 401) return null;
+    return json<User>(res);
+  },
+};
+
+// --- Datasets ------------------------------------------------------------
+
+export const datasetsApi = {
+  async list(): Promise<DatasetMeta[]> {
+    return json(await fetch("/api/datasets", { cache: "no-store", ...withCreds }));
+  },
+  async get(id: string): Promise<DatasetMeta> {
+    return json(await fetch(`/api/datasets/${id}`, { cache: "no-store", ...withCreds }));
+  },
+  async upload(file: File, name: string): Promise<DatasetMeta> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name);
+    return json(
+      await fetch("/api/datasets", { method: "POST", body: form, ...withCreds })
+    );
+  },
+  async updateContext(id: string, businessContext: string): Promise<DatasetMeta> {
+    return json(
+      await fetch(`/api/datasets/${id}/context`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ business_context: businessContext }),
+        ...withCreds,
+      })
+    );
+  },
+  async remove(id: string): Promise<void> {
+    await fetch(`/api/datasets/${id}`, { method: "DELETE", ...withCreds });
+  },
+};
+
+// --- Conversations -------------------------------------------------------
+
+export const conversationsApi = {
+  async list(): Promise<ConversationMeta[]> {
+    return json(await fetch("/api/conversations", { cache: "no-store", ...withCreds }));
+  },
+  async get(id: string): Promise<unknown> {
+    return json(
+      await fetch(`/api/conversations/${id}`, { cache: "no-store", ...withCreds })
+    );
+  },
+  async rename(id: string, title: string): Promise<ConversationMeta> {
+    return json(
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        ...withCreds,
+      })
+    );
+  },
+  async remove(id: string): Promise<void> {
+    await fetch(`/api/conversations/${id}`, { method: "DELETE", ...withCreds });
+  },
+};
 
 /** Read saved analyst preferences. */
 export async function fetchPreferences(): Promise<string> {
@@ -31,6 +155,9 @@ export interface ChatArgs {
   provider: Provider;
   model: string;
   apiKey?: string;
+  /** Hosted mode: the dataset to query and the conversation to append to. */
+  datasetId?: string;
+  conversationId?: string;
   signal?: AbortSignal;
   onEvent: (event: ChatEvent) => void;
 }
@@ -49,8 +176,11 @@ export async function streamChat(args: ChatArgs): Promise<void> {
       provider: args.provider,
       model: args.model,
       api_key: args.apiKey || null,
+      dataset_id: args.datasetId || null,
+      conversation_id: args.conversationId || null,
     }),
     signal: args.signal,
+    credentials: "include",
   });
 
   if (!res.ok || !res.body) {

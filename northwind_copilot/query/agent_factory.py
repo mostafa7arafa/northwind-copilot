@@ -59,6 +59,31 @@ class EngineConfig:
         return self.provider in _CLOUD_PROVIDERS
 
 
+@dataclass(frozen=True)
+class DatasetContext:
+    """The uploaded dataset one request runs against (hosted mode).
+
+    Kept separate from :class:`EngineConfig` (which is purely about inference)
+    so the agent's data source and its model are independent choices.
+
+    Attributes:
+        sqlite_path: Filesystem path to the dataset's read-only SQLite file.
+        schema_summary: Generated description of the dataset's tables/columns,
+            injected into the system prompt in place of the Northwind rules.
+        business_context: User-editable domain notes (formulas, definitions)
+            appended to the prompt.
+    """
+
+    sqlite_path: str
+    schema_summary: str = ""
+    business_context: str = ""
+
+    @property
+    def database_uri(self) -> str:
+        """SQLAlchemy URI for this dataset's SQLite file."""
+        return f"sqlite:///{self.sqlite_path}"
+
+
 def build_model(config: EngineConfig) -> BaseChatModel:
     """Instantiate a chat model from an engine config.
 
@@ -74,28 +99,43 @@ def build_model(config: EngineConfig) -> BaseChatModel:
     if config.provider == "ollama":
         from langchain_ollama import ChatOllama
 
-        return ChatOllama(model=config.model, temperature=settings.temperature)
-
-    if config.provider == "openai":
-        from langchain_openai import ChatOpenAI
-
-        return ChatOpenAI(
+        return ChatOllama(
             model=config.model,
             temperature=settings.temperature,
-            api_key=config.api_key,
+            base_url=settings.ollama_base_url,
         )
 
-    if config.provider == "openrouter":
+    if config.provider in _CLOUD_PROVIDERS:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(
-            model=config.model,
-            temperature=settings.temperature,
-            api_key=config.api_key,
-            base_url=OPENROUTER_BASE_URL,
-        )
+        kwargs: dict = {
+            "model": config.model,
+            "temperature": settings.temperature,
+            "api_key": config.api_key,
+        }
+        if config.provider == "openrouter":
+            kwargs["base_url"] = OPENROUTER_BASE_URL
+        kwargs.update(_insecure_http_clients())
+        return ChatOpenAI(**kwargs)
 
     raise ValueError(f"Unknown provider: {config.provider!r}")
+
+
+def _insecure_http_clients() -> dict:
+    """Return http client kwargs that skip TLS verification, or ``{}``.
+
+    Only active when ``settings.insecure_tls`` is set — a dev-only escape hatch
+    for TLS-intercepting networks. In every normal deployment this returns an
+    empty dict and the default, verifying clients are used.
+    """
+    if not settings.insecure_tls:
+        return {}
+    import httpx
+
+    return {
+        "http_client": httpx.Client(verify=False),
+        "http_async_client": httpx.AsyncClient(verify=False),
+    }
 
 
 def build_agent_for(
@@ -103,6 +143,7 @@ def build_agent_for(
     *,
     user_preferences: str = "",
     fallback: BaseChatModel | None = None,
+    dataset: DatasetContext | None = None,
 ) -> CompiledStateGraph:
     """Assemble a compiled agent for the chosen engine.
 
@@ -114,12 +155,15 @@ def build_agent_for(
         user_preferences: Free text appended to the system prompt.
         fallback: Optional cloud model used as the escalation target for a
             local primary.
+        dataset: The uploaded dataset to query (hosted mode). When ``None`` the
+            agent runs against the configured Northwind database (POC) with the
+            Northwind-specific prompt and the ``search_docs`` knowledge tool.
 
     Returns:
         A compiled LangGraph agent ready to stream.
     """
     model = build_model(config)
-    db = build_database()
+    db = build_database(dataset.database_uri if dataset else None)
     sql_tools = SQLDatabaseToolkit(db=db, llm=model).get_tools()
 
     if config.is_local:
@@ -133,7 +177,13 @@ def build_agent_for(
         is_local=config.is_local,
         supports_charts=config.supports_charts,
         user_preferences=user_preferences,
+        dataset_summary=dataset.schema_summary if dataset else None,
+        business_context=dataset.business_context if dataset else "",
     )
+
+    # The Northwind knowledge base (search_docs) is POC-only; an uploaded
+    # dataset carries its own context via the schema summary + business context.
+    tools = sql_tools if dataset else sql_tools + [search_docs]
 
     # Local models have a tight context, so the trim is the load-bearing guard;
     # cloud models get a large budget so the curated multi-turn history the
@@ -150,7 +200,7 @@ def build_agent_for(
 
     return create_agent(
         model=model,
-        tools=sql_tools + [search_docs],
+        tools=tools,
         system_prompt=system_prompt,
         checkpointer=None,
         middleware=middleware,

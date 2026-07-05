@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, ChevronDown, Cloud, Cpu, Pin } from "lucide-react";
 import type { Turn } from "@/lib/types";
+import { turnCharts, turnQueries } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/cn";
 import { QueryTrace } from "./QueryTrace";
@@ -70,12 +71,20 @@ export function QueryTurn({ turn }: { turn: Turn }) {
   const pin = useStore((s) => s.pinTurn);
   const pinnedId = useStore((s) => s.pinnedTurnId);
   const tint = turn.engine === "cloud" ? "var(--color-electric)" : "var(--color-steel)";
-  const showSqlSkeleton = !turn.sql && turn.stages.sql === "active";
-  const showTableSkeleton = !turn.table && turn.stages.results === "active";
-  const showChartSkeleton = !turn.chart && turn.stages.chart === "active";
+  const queries = turnQueries(turn);
+  const charts = turnCharts(turn);
+  const hasAnyArtifact = queries.length > 0 || charts.length > 0;
+  const showSqlSkeleton = queries.length === 0 && turn.stages.sql === "active";
+  const showTableSkeleton =
+    !queries.some((q) => q.table) && turn.stages.results === "active";
+  const showChartSkeleton = charts.length === 0 && turn.stages.chart === "active";
 
+  const tables = queries.flatMap((q) => (q.table ? [q.table] : []));
   const emptyResult =
-    !turn.running && !turn.error && !!turn.table && turn.table.rows.length === 0;
+    !turn.running &&
+    !turn.error &&
+    tables.length > 0 &&
+    tables.every((t) => t.rows.length === 0);
   const stray = strayYear(turn.question);
   const showWink = emptyResult && stray !== null;
 
@@ -108,7 +117,7 @@ export function QueryTurn({ turn }: { turn: Turn }) {
             </span>
           </div>
         </div>
-        {(turn.sql || turn.table || turn.chart) && (
+        {hasAnyArtifact && (
           <button
             type="button"
             onClick={() => pin(pinnedId === turn.id ? null : turn.id)}
@@ -170,25 +179,20 @@ export function QueryTurn({ turn }: { turn: Turn }) {
                 {/* SQL / results / chart live in the artifact workspace on wide
                     screens; shown inline only below lg, where no panel exists. */}
                 <div className="space-y-3 lg:hidden">
-                  {turn.sql && (
-                    <motion.div {...block}>
-                      <SqlCard sql={turn.sql} tint={tint} />
+                  {queries.map((q, i) => (
+                    <motion.div key={i} {...block} className="space-y-3">
+                      {q.sql && <SqlCard sql={q.sql} tint={tint} />}
+                      {q.table && <ResultsTable data={q.table} />}
                     </motion.div>
-                  )}
+                  ))}
                   {showSqlSkeleton && <SqlSkeleton />}
-
-                  {turn.table && (
-                    <motion.div {...block}>
-                      <ResultsTable data={turn.table} />
-                    </motion.div>
-                  )}
                   {showTableSkeleton && <TableSkeleton />}
 
-                  {turn.chart && (
-                    <motion.div {...block}>
-                      <ChartCard option={turn.chart} inferred={!!turn.chartInferred} />
+                  {charts.map((c, i) => (
+                    <motion.div key={i} {...block}>
+                      <ChartCard option={c.option} inferred={c.inferred} />
                     </motion.div>
-                  )}
+                  ))}
                   {showChartSkeleton && <ChartSkeleton />}
                 </div>
 

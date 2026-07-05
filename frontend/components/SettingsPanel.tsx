@@ -5,6 +5,8 @@ import { Check, KeyRound, Sparkles, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 
+const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
+
 /** Settings drawer: analyst preferences (appended to the system prompt) and
  * per-provider API keys (kept in this browser only). */
 export function SettingsPanel() {
@@ -85,10 +87,23 @@ export function SettingsPanel() {
                   <KeyRound size={14} className="text-warn" />
                   <h3 className="text-[13.5px] font-medium text-ink">Provider keys</h3>
                 </div>
-                <p className="mb-3 text-[12.5px] leading-relaxed text-ink-dim">
-                  Required for cloud engines. Stored only in this browser and sent
-                  with your requests — never persisted on the server.
-                </p>
+                {HOSTED ? (
+                  <p className="mb-3 text-[12.5px] leading-relaxed text-ink-dim">
+                    <span className="text-electric">
+                      Your free trial includes cloud model calls on our API keys
+                    </span>{" "}
+                    — you don&apos;t need to add anything to start asking
+                    questions. Add your own OpenAI or OpenRouter key below to
+                    run on your own account instead. Keys are kept only in this
+                    browser and sent with your requests — never persisted on the
+                    server.
+                  </p>
+                ) : (
+                  <p className="mb-3 text-[12.5px] leading-relaxed text-ink-dim">
+                    Required for cloud engines. Stored only in this browser and
+                    sent with your requests — never persisted on the server.
+                  </p>
+                )}
                 <div className="space-y-3">
                   {(
                     [

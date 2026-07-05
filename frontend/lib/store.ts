@@ -10,6 +10,7 @@ import type {
   TableData,
   Turn,
 } from "./types";
+import { turnQueries } from "./types";
 
 const STAGES: StageId[] = [
   "understand",
@@ -23,7 +24,14 @@ const STAGES: StageId[] = [
 const idleStages = () =>
   Object.fromEntries(STAGES.map((s) => [s, "idle"])) as Turn["stages"];
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2, 10);
+
+// Cap retained sessions so localStorage can't grow without bound. Each session
+// can hold several turns with up to 500 result rows apiece.
+const MAX_SESSIONS = 50;
 
 function newSession(): Session {
   return { id: uid(), title: "New analysis", turns: [], createdAt: Date.now() };
@@ -56,8 +64,12 @@ function turnMemory(t: Turn, engine: Engine): string {
   if (engine === "local") return t.answer ?? "";
   const parts: string[] = [];
   if (t.answer) parts.push(t.answer);
-  if (t.sql) parts.push("SQL used:\n```sql\n" + t.sql + "\n```");
-  if (t.table && t.table.rows.length) parts.push(compactTable(t.table));
+  // A complex turn may have run several queries; recap the first few so
+  // follow-ups can anchor on any of them.
+  for (const q of turnQueries(t).slice(0, 3)) {
+    if (q.sql) parts.push("SQL used:\n```sql\n" + q.sql + "\n```");
+    if (q.table && q.table.rows.length) parts.push(compactTable(q.table));
+  }
   return parts.join("\n\n");
 }
 
@@ -85,6 +97,10 @@ interface State {
   pinnedTurnId: string | null;
   kbHint: boolean; // radar toggle: nudge the agent to consult the knowledge base
   queryCount: number; // completed analyses — drives the milestone easter egg
+  // Hosted mode: the uploaded dataset to query, and the server-owned
+  // conversation this session maps to (learned from the `conversation` event).
+  activeDatasetId: string | null;
+  conversationId: string | null;
 
   // actions
   init: () => Promise<void>;
@@ -97,6 +113,7 @@ interface State {
   setArtifactWidth: (width: number) => void;
   openSettings: (open: boolean) => void;
   toggleKbHint: () => void;
+  setActiveDataset: (id: string | null) => void;
   createSession: () => void;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => void;
@@ -122,6 +139,8 @@ export const useStore = create<State>()(
       pinnedTurnId: null,
       kbHint: false,
       queryCount: 0,
+      activeDatasetId: null,
+      conversationId: null,
 
       init: async () => {
         if (!get().currentId) set({ currentId: get().sessions[0].id });
@@ -131,17 +150,27 @@ export const useStore = create<State>()(
             fetchPreferences(),
           ]);
           set({ registry, preferences });
-          // Default the model to the first available option for the engine.
           const s = get();
-          if (!s.model) {
-            if (s.engine === "local" && registry.local.models[0]) {
-              set({ provider: "ollama", model: registry.local.models[0].id });
-            } else if (registry.cloud[0]?.models[0]) {
-              set({
-                provider: registry.cloud[0].provider,
-                model: registry.cloud[0].models[0].id,
-              });
-            }
+          // If the local engine isn't available (always the case in the hosted
+          // product — no Ollama), force the cloud engine so requests don't go
+          // to a non-existent local daemon.
+          const localUsable = registry.local.available && s.engine === "local";
+          // Prefer a cloud provider the server already has a key for (no BYOK
+          // needed), e.g. our OpenRouter key in the hosted product.
+          const cloud =
+            registry.cloud.find((c) => !c.needs_key) ?? registry.cloud[0];
+          if (!localUsable && cloud?.models[0]) {
+            const cloudDefault = cloud.models[0].id;
+            // Coming from the local engine, a persisted model id is an Ollama
+            // model — reset to a cloud model so requests don't fail.
+            const keepModel = s.engine === "cloud" && s.model;
+            set({
+              engine: "cloud",
+              provider: cloud.provider,
+              model: keepModel || cloudDefault,
+            });
+          } else if (!s.model && registry.local.models[0]) {
+            set({ provider: "ollama", model: registry.local.models[0].id });
           }
         } catch {
           /* backend offline; UI still renders */
@@ -179,12 +208,20 @@ export const useStore = create<State>()(
         set({ artifactWidth: Math.max(380, Math.min(width, 900)) }),
       openSettings: (open) => set({ settingsOpen: open }),
       toggleKbHint: () => set({ kbHint: !get().kbHint }),
+      // Switching dataset starts a fresh server-side conversation.
+      setActiveDataset: (id) => set({ activeDatasetId: id, conversationId: null }),
 
       createSession: () => {
         const s = newSession();
-        set({ sessions: [s, ...get().sessions], currentId: s.id, pinnedTurnId: null });
+        set({
+          sessions: [s, ...get().sessions].slice(0, MAX_SESSIONS),
+          currentId: s.id,
+          pinnedTurnId: null,
+          conversationId: null, // a new session is a new server conversation
+        });
       },
-      selectSession: (id) => set({ currentId: id, pinnedTurnId: null }),
+      selectSession: (id) =>
+        set({ currentId: id, pinnedTurnId: null, conversationId: null }),
 
       deleteSession: (id) => {
         const remaining = get().sessions.filter((s) => s.id !== id);
@@ -241,7 +278,9 @@ export const useStore = create<State>()(
           ),
         });
 
-        const patch = (p: Partial<Turn>) =>
+        // patchFn computes the update from the turn's current state, so
+        // handlers can append to the queries/charts arrays as events stream in.
+        const patchFn = (fn: (t: Turn) => Partial<Turn>) =>
           set({
             sessions: get().sessions.map((s) =>
               s.id !== currentId
@@ -249,11 +288,12 @@ export const useStore = create<State>()(
                 : {
                     ...s,
                     turns: s.turns.map((t) =>
-                      t.id === turn.id ? { ...t, ...p } : t
+                      t.id === turn.id ? { ...t, ...fn(t) } : t
                     ),
                   }
             ),
           });
+        const patch = (p: Partial<Turn>) => patchFn(() => p);
 
         const setStage = (stage: StageId, status: "active" | "done") =>
           set({
@@ -309,28 +349,60 @@ export const useStore = create<State>()(
             provider,
             model,
             apiKey,
+            // Hosted mode: query the active dataset and continue the server-side
+            // conversation. Ignored by the POC backend.
+            datasetId: get().activeDatasetId ?? undefined,
+            conversationId: get().conversationId ?? undefined,
             onEvent: (e) => {
               switch (e.type) {
                 case "engine":
                   patch({ engine: e.engine, provider: e.provider, model: e.model });
                   break;
+                case "conversation":
+                  // Learn (or confirm) which server conversation this maps to.
+                  set({ conversationId: e.id });
+                  break;
                 case "stage":
                   setStage(e.stage, e.status);
                   break;
                 case "sql":
-                  patch({ sql: e.sql });
+                  patchFn((t) => ({
+                    sql: e.sql,
+                    queries: [...(t.queries ?? []), { sql: e.sql }],
+                  }));
                   break;
-                case "table":
-                  patch({
-                    table: {
-                      columns: e.columns,
-                      rows: e.rows,
-                      truncated: e.truncated,
-                    },
+                case "table": {
+                  const data = {
+                    columns: e.columns,
+                    rows: e.rows,
+                    truncated: e.truncated,
+                  };
+                  patchFn((t) => {
+                    // Pair the table with its query by seq; fall back to the
+                    // first query still missing a table.
+                    const queries = [...(t.queries ?? [])];
+                    const i =
+                      typeof e.seq === "number" && queries[e.seq]
+                        ? e.seq
+                        : queries.findIndex((q) => !q.table);
+                    if (i >= 0 && queries[i]) {
+                      queries[i] = { ...queries[i], table: data };
+                    } else {
+                      queries.push({ sql: "", table: data });
+                    }
+                    return { table: data, queries };
                   });
                   break;
+                }
                 case "chart":
-                  patch({ chart: e.option, chartInferred: e.inferred });
+                  patchFn((t) => ({
+                    chart: e.option,
+                    chartInferred: e.inferred,
+                    charts: [
+                      ...(t.charts ?? []),
+                      { option: e.option, inferred: e.inferred },
+                    ],
+                  }));
                   break;
                 case "insights":
                   patch({ insights: { text: e.text, bullets: e.bullets } });
@@ -359,17 +431,22 @@ export const useStore = create<State>()(
     }),
     {
       name: "trading-desk",
+      // NB: `keys` (provider API keys) are deliberately NOT persisted. Keeping
+      // them in localStorage exposes them to any XSS or shared-machine user;
+      // they live in memory only and are re-entered per session until the
+      // backend stores them per-user server-side.
       partialize: (s) => ({
         engine: s.engine,
         provider: s.provider,
         model: s.model,
-        keys: s.keys,
         sessions: s.sessions,
         currentId: s.currentId,
         sidebarOpen: s.sidebarOpen,
         artifactWidth: s.artifactWidth,
         kbHint: s.kbHint,
         queryCount: s.queryCount,
+        activeDatasetId: s.activeDatasetId,
+        conversationId: s.conversationId,
       }),
     }
   )

@@ -43,7 +43,17 @@ class TestParseFinal:
         out = _parse_final(content)
         assert out["prose"] == "Revenue rose."
         assert out["bullets"] == ["up 10%", "peak in July"]
-        assert out["chart"] == {"series": [1]}
+        assert out["charts"] == [{"series": [1]}]
+
+    def test_extracts_multiple_charts_in_order(self):
+        content = (
+            "Two views.\n\n"
+            '```echarts\n{"title": {"text": "a"}}\n```\n\n'
+            '```echarts\n{"title": {"text": "b"}}\n```'
+        )
+        out = _parse_final(content)
+        assert [c["title"]["text"] for c in out["charts"]] == ["a", "b"]
+        assert out["prose"] == "Two views."
 
     def test_strips_markdown_table_rows(self):
         content = "Here it is:\n| a | b |\n| --- | --- |\n| 1 | 2 |\nDone."
@@ -53,7 +63,7 @@ class TestParseFinal:
 
     def test_invalid_echarts_json_ignored(self):
         out = _parse_final("Text\n```echarts\n{not json}\n```")
-        assert out["chart"] is None
+        assert out["charts"] == []
         assert out["prose"] == "Text"
 
 
@@ -120,7 +130,9 @@ class _FakeAgent:
 def _collect_stream(monkeypatch, agent):
     monkeypatch.setattr(streaming, "build_agent_for", lambda config, **kw: agent)
     monkeypatch.setattr(
-        streaming, "run_sql", lambda sql: {"columns": ["x"], "rows": [[1], [2]]}
+        streaming,
+        "run_sql",
+        lambda sql, db_path=None: {"columns": ["x"], "rows": [[1], [2]]},
     )
     monkeypatch.setattr(streaming, "infer_chart", lambda table: {"series": []})
 
@@ -174,6 +186,90 @@ class TestStreamChat:
         sql_event = next(e for e in events if e["type"] == "sql")
         assert "SELECT 1" in sql_event["sql"]
 
+    def test_multiple_queries_and_charts_all_emitted(self, monkeypatch):
+        """A complex turn: two executed queries, two model-drawn charts."""
+        calls = [
+            {
+                "name": "sql_db_query",
+                "args": {"query": f"SELECT {i} AS x"},
+                "id": str(i),
+                "type": "tool_call",
+            }
+            for i in (1, 2)
+        ]
+        final = (
+            "Two answers.\n\nInsights:\n- both up\n\n"
+            '```echarts\n{"title": {"text": "first"}}\n```\n'
+            '```echarts\n{"title": {"text": "second"}}\n```'
+        )
+        updates = [
+            {"agent": {"messages": [AIMessage(content="", tool_calls=calls)]}},
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(
+                            content="[(1,)]", name="sql_db_query", tool_call_id="1"
+                        )
+                    ]
+                }
+            },
+            {"agent": {"messages": [AIMessage(content=final)]}},
+        ]
+        events = _collect_stream(monkeypatch, _FakeAgent(updates))
+
+        sql_events = [e for e in events if e["type"] == "sql"]
+        assert [e["seq"] for e in sql_events] == [0, 1]
+        assert [e["sql"] for e in sql_events] == ["SELECT 1 AS x", "SELECT 2 AS x"]
+
+        table_events = [e for e in events if e["type"] == "table"]
+        assert [e["seq"] for e in table_events] == [0, 1]
+
+        chart_events = [e for e in events if e["type"] == "chart"]
+        assert [e["option"]["title"]["text"] for e in chart_events] == [
+            "first",
+            "second",
+        ]
+        assert all(e["inferred"] is False for e in chart_events)
+
+    def test_no_model_chart_falls_back_to_single_inferred(self, monkeypatch):
+        tool_call = {
+            "name": "sql_db_query",
+            "args": {"query": "SELECT 1 AS x"},
+            "id": "1",
+            "type": "tool_call",
+        }
+        updates = [
+            {"agent": {"messages": [AIMessage(content="", tool_calls=[tool_call])]}},
+            {"agent": {"messages": [AIMessage(content="Answer is 1.")]}},
+        ]
+        events = _collect_stream(monkeypatch, _FakeAgent(updates))
+        chart_events = [e for e in events if e["type"] == "chart"]
+        assert len(chart_events) == 1
+        assert chart_events[0]["inferred"] is True
+
+    def test_timeout_salvages_partial_artifacts(self, monkeypatch):
+        """A turn cut off by the deadline still shows the completed queries."""
+        tool_call = {
+            "name": "sql_db_query",
+            "args": {"query": "SELECT 1 AS x"},
+            "id": "1",
+            "type": "tool_call",
+        }
+        updates = [
+            {"agent": {"messages": [AIMessage(content="", tool_calls=[tool_call])]}},
+        ]
+        agent = _FakeAgent(updates, raise_exc=TimeoutError("budget"))
+        events = _collect_stream(monkeypatch, agent)
+        types = [e["type"] for e in events]
+        # The executed query's sql + table (and inferred chart) survive the cut.
+        for expected in ("sql", "table", "chart", "error"):
+            assert expected in types
+        assert types[-1] == "done"
+        # The salvage events must precede the error notice.
+        assert types.index("table") < types.index("error")
+        err = next(e for e in events if e["type"] == "error")
+        assert err["detail"] == "timeout"
+
     def test_agent_error_surfaces_error_event(self, monkeypatch):
         agent = _FakeAgent([], raise_exc=RuntimeError("boom"))
         events = _collect_stream(monkeypatch, agent)
@@ -181,4 +277,8 @@ class TestStreamChat:
         assert "error" in types
         assert types[-1] == "done"
         err = next(e for e in events if e["type"] == "error")
-        assert "boom" in err["detail"]
+        # The raw exception text ("boom") must NOT reach the client — it can leak
+        # connection URIs and paths. The client gets a correlation id instead.
+        assert "boom" not in err["detail"]
+        assert err["detail"].startswith("error_id=")
+        assert err["message"]

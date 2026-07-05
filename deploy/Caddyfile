@@ -1,0 +1,37 @@
+# Caddy reverse proxy: automatic HTTPS, security headers, and routing.
+#
+# /api/* → FastAPI backend (SSE streaming; buffering disabled).
+# everything else → Next.js frontend.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Security headers — shrink the XSS/clickjacking surface that would
+	# otherwise threaten the httpOnly auth cookie.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Next.js injects inline bootstrap/hydration scripts, so script-src needs
+		# 'unsafe-inline'. (A stricter per-request nonce CSP via Next middleware
+		# is the hardening follow-up; the session cookie is httpOnly regardless.)
+		# cdn.jsdelivr.net + worker-src blob: are for the Monaco SQL editor,
+		# which @monaco-editor/react loads from that CDN at runtime (scripts,
+		# CSS, the codicon font, and blob-wrapped workers). Self-hosting Monaco
+		# is the follow-up that removes the CDN from this policy.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; worker-src 'self' blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
+	# API: proxy to the backend and do NOT buffer — SSE must stream.
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	# Frontend: everything else.
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
