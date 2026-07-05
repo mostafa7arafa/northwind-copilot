@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -215,3 +217,74 @@ class Turn(Base):
     )
 
     conversation: Mapped[Conversation] = relationship(back_populates="turns")
+
+
+class UsageEvent(Base):
+    """One analyst turn's token consumption, priced in credits.
+
+    Recorded for every hosted turn — including BYOK turns (``byok=True``,
+    ``credits=0``) so fair-use analytics see the full picture. The credit
+    *charge* lives in ``credit_ledger``; this table is the per-turn evidence.
+    """
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("turns.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), default="")
+    model: Mapped[str] = mapped_column(String(200), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    credits: Mapped[float] = mapped_column(Numeric(12, 4), default=0)
+    byok: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class CreditLedger(Base):
+    """Append-only credit movements for an org; balance = SUM(delta).
+
+    ``orgs.credit_balance`` caches the running balance (updated in the same
+    transaction, under row lock on Postgres) so entitlement checks are a
+    single-row read; this table stays the auditable source of truth.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    delta: Mapped[float] = mapped_column(Numeric(12, 4))
+    # grant | usage | adjustment | rollover_expiry
+    reason: Mapped[str] = mapped_column(String(20))
+    balance_after: Mapped[float] = mapped_column(Numeric(12, 4))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class ApiKey(Base):
+    """An org's stored BYOK provider key, encrypted at rest (Fernet).
+
+    Write-only by contract: the API returns only ``{provider, last4, set_at}``
+    after a key is stored — the plaintext never travels back to any client.
+    """
+
+    __tablename__ = "api_keys"
+
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), primary_key=True)
+    encrypted_key: Mapped[str] = mapped_column(String)
+    last4: Mapped[str] = mapped_column(String(4), default="")
+    set_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )

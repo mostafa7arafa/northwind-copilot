@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from northwind_copilot.billing.entitlements import ensure_upload_allowed
 from northwind_copilot.core.config import settings
 from northwind_copilot.datasets import ingest as ingest_mod
 from northwind_copilot.datasets import storage
@@ -22,7 +23,10 @@ from northwind_copilot.tenancy.models import Dataset
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
-# v1 upload ceiling. Phase 1 entitlements replace this with a per-tier cap.
+# Hard ceiling on synchronous in-request ingestion, independent of plan tier.
+# Plan caps below this (trial 10MB) bind first; caps above it (Pro/Team) stay
+# bounded here until background ingestion ships — a 200MB+ file read into
+# memory would stall the single worker.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 _EXT_TO_SOURCE = {
@@ -113,6 +117,16 @@ async def upload_dataset(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the upload size limit.",
         )
+    # Plan quotas: dataset count and per-tier size cap (the hard ceiling above
+    # bounds request memory regardless of tier).
+    dataset_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(Dataset)
+            .where(Dataset.org_id == ctx.org_id, Dataset.status != "failed")
+        )
+    ).scalar_one()
+    ensure_upload_allowed(ctx.plan, dataset_count=dataset_count, file_bytes=len(data))
 
     dataset = Dataset(
         org_id=ctx.org_id,

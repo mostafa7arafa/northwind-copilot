@@ -1,9 +1,11 @@
 import type {
+  ApiKeyMeta,
   ChatEvent,
   ConversationMeta,
   DatasetMeta,
   ModelRegistry,
   Provider,
+  UsageInfo,
   User,
 } from "./types";
 
@@ -128,6 +130,36 @@ export const conversationsApi = {
   },
   async remove(id: string): Promise<void> {
     await fetch(`/api/conversations/${id}`, { method: "DELETE", ...withCreds });
+  },
+};
+
+// --- Usage & BYOK keys -----------------------------------------------------
+
+/** Fetch the org's plan + remaining allowance, or null in the POC. */
+export async function fetchUsage(): Promise<UsageInfo | null> {
+  const res = await fetch("/api/usage", { cache: "no-store", ...withCreds });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.hosted ? (data as UsageInfo) : null;
+}
+
+export const keysApi = {
+  async list(): Promise<ApiKeyMeta[]> {
+    return json(await fetch("/api/keys", { cache: "no-store", ...withCreds }));
+  },
+  /** Store a provider key server-side (write-only; returns metadata). */
+  async set(provider: "openai" | "openrouter", key: string): Promise<ApiKeyMeta> {
+    return json(
+      await fetch(`/api/keys/${provider}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+        ...withCreds,
+      })
+    );
+  },
+  async remove(provider: "openai" | "openrouter"): Promise<void> {
+    await fetch(`/api/keys/${provider}`, { method: "DELETE", ...withCreds });
   },
 };
 
