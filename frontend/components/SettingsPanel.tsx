@@ -1,11 +1,20 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, KeyRound, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CreditCard,
+  KeyRound,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import { ApiError, keysApi } from "@/lib/api";
+import { ApiError, billingApi, keysApi } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import type { ApiKeyMeta } from "@/lib/types";
+import type { ApiKeyMeta, PlanInfo } from "@/lib/types";
 
 const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
@@ -110,6 +119,106 @@ function ServerKeyRow({
   );
 }
 
+/** Hosted mode: current plan, upgrade buttons, and dunning state.
+ *
+ * "Upgrade" starts a provider checkout and navigates to the returned URL —
+ * with the mock provider that completes instantly and bounces back with
+ * `?billing=success`; with a real provider it is the hosted payment page.
+ * The frontend is identical either way. */
+function PlanSection() {
+  const usage = useStore((s) => s.usage);
+  const [plans, setPlans] = useState<PlanInfo[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    billingApi
+      .plans()
+      .then(setPlans)
+      .catch(() => setPlans([]));
+  }, []);
+
+  const upgrade = async (plan: string) => {
+    setBusy(plan);
+    setError("");
+    try {
+      window.location.assign(await billingApi.checkout(plan));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Checkout failed.");
+      setBusy(null);
+    }
+  };
+
+  const paid = plans.filter((p) => p.price_usd > 0);
+  const current = usage?.plan ?? "trial";
+
+  return (
+    <section>
+      <div className="mb-1 flex items-center gap-2">
+        <CreditCard size={14} className="text-electric" />
+        <h3 className="text-[13.5px] font-medium text-ink">Plan &amp; billing</h3>
+      </div>
+      <p className="mb-3 text-[12.5px] leading-relaxed text-ink-dim">
+        You&apos;re on <span className="text-ink">{current}</span>
+        {usage && current !== "trial"
+          ? ` — ${Math.max(0, Math.floor(usage.credits_remaining))} of ${
+              usage.credits_per_month
+            } credits left this period.`
+          : usage
+          ? ` — ${Math.max(
+              0,
+              usage.trial_queries_limit - usage.trial_queries_used
+            )} trial queries left.`
+          : "."}
+      </p>
+      {usage?.subscription_status === "past_due" && (
+        <p className="mb-3 flex items-center gap-1.5 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-warn">
+          <AlertTriangle size={13} />
+          Your last payment failed — service continues during the grace period.
+        </p>
+      )}
+      <div className="space-y-2">
+        {paid.map((p) => {
+          const isCurrent =
+            p.id === current && usage?.subscription_status !== "cancelled";
+          return (
+            <div
+              key={p.id}
+              className="flex items-center justify-between rounded-lg border border-hairline bg-bg p-3"
+            >
+              <div>
+                <span className="tape text-[13px] capitalize text-ink">{p.id}</span>
+                <span className="ml-2 text-[12px] text-ink-dim">
+                  ${p.price_usd}/mo
+                </span>
+                <p className="mt-0.5 text-[11.5px] text-ink-faint">
+                  {p.credits_per_month} credits · {p.max_datasets} datasets ·{" "}
+                  {p.upload_cap_mb}MB uploads
+                  {p.seats > 1 ? ` · ${p.seats} seats` : ""}
+                  {p.byok ? " · BYOK" : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isCurrent || busy !== null}
+                onClick={() => upgrade(p.id)}
+                className={
+                  isCurrent
+                    ? "shrink-0 rounded-lg border border-hairline px-3 py-1.5 text-[12px] text-ink-faint"
+                    : "shrink-0 rounded-lg bg-electric px-3 py-1.5 text-[12px] font-medium text-bg transition hover:brightness-110 disabled:opacity-40"
+                }
+              >
+                {isCurrent ? "Current" : busy === p.id ? "Opening…" : "Upgrade"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="mt-2 text-[11.5px] text-warn">{error}</p>}
+    </section>
+  );
+}
+
 /** Settings drawer: analyst preferences (appended to the system prompt) and
  * provider API keys — stored encrypted server-side in the hosted product,
  * kept in-browser only for the POC. */
@@ -172,6 +281,9 @@ export function SettingsPanel() {
             </div>
 
             <div className="flex-1 space-y-8 overflow-auto p-5">
+              {/* plan & billing */}
+              {HOSTED && <PlanSection />}
+
               {/* preferences */}
               <section>
                 <div className="mb-1 flex items-center gap-2">

@@ -122,12 +122,40 @@ settle-on-disconnect path (mocked agent). What needs a real browser + LLM:
 - [ ] Set `SENTRY_DSN` and force an error → event arrives with the `error_id`
       tag matching the id shown in chat; no `sk-…` values anywhere in the event
 
+## 8. Billing lifecycle (mock provider) 🔴
+
+`BILLING_PROVIDER=mock` (the default) mimics the full transaction flow — real
+checkout URL, signed webhooks, idempotent processing, credit grants — with no
+money. Automated tests cover the lifecycle; check the UX in a browser:
+
+- [ ] Settings → **Plan & billing** lists Starter/Pro/Team with prices; your
+      current plan shows trial queries left
+- [ ] Click **Upgrade** on Pro → browser bounces through the mock checkout and
+      lands back on `/?billing=success`; the header meter now shows
+      `pro · 1200 credits`
+- [ ] Refresh the checkout completion URL from history → balance does **not**
+      double (idempotent webhook replay)
+- [ ] Simulate a renewal:
+      `curl -k -X POST https://localhost/api/billing/mock/simulate -H "Content-Type: application/json" -b "nw_session=<cookie>" -d '{"kind":"renewed"}'`
+      → leftover credits expire, fresh 1,200 granted (ledger shows
+      `rollover_expiry` + `grant`)
+- [ ] Simulate `{"kind":"payment_failed"}` → meter turns amber; Settings shows
+      the grace-period banner; chat still works
+- [ ] Simulate `{"kind":"cancelled"}` → plan drops to expired trial: chat
+      returns 402, but conversations/datasets stay readable
+- [ ] Buy again after cancelling → back to active with a fresh grant
+
+When real payments arrive: implement `billing/paddle.py` against the
+`BillingProvider` protocol, set `BILLING_PROVIDER=paddle`, and point Paddle's
+webhook at `POST /api/billing/webhook` — routes, lifecycle, ledger, and the
+frontend don't change.
+
 ## Known gaps (deliberately not built yet — don't test for these)
 
-- **Payments** — no Paddle checkout/webhooks yet (Phase 2). Plans are changed
-  by hand in the DB; credits granted via `grant_credits`.
-- **Monthly credit renewal / rollover expiry** — arrives with billing webhooks
-  (Phase 2); `reason='rollover_expiry'` is reserved in the ledger.
+- **Real payments** — the mock provider stands in for Paddle; no money moves.
+  Paddle (Phase 2) is one new module behind the same protocol + env flip.
+- **Automatic renewals** — nothing schedules `renewed` events yet (a real
+  provider fires them; the mock has the `/simulate` drill). No dunning emails.
 - **Org invites / seats** — the Team tier's seat count is defined but not
   enforced (no invite endpoint yet).
 - **Google OAuth** — endpoints not wired yet; email+password only.

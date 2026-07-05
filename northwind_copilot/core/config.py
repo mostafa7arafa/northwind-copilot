@@ -144,6 +144,11 @@ class Settings:
     # Google OAuth (optional; empty disables the Google sign-in button).
     google_client_id: str = _env("GOOGLE_CLIENT_ID", "")
     google_client_secret: str = _env("GOOGLE_CLIENT_SECRET", "")
+    # Which billing backend serves checkout/webhooks. "mock" completes
+    # purchases instantly through the same webhook pipeline a real provider
+    # would use (full lifecycle, no money); "paddle" arrives with Phase 2 as
+    # one new module implementing the same BillingProvider protocol.
+    billing_provider: str = _env("BILLING_PROVIDER", "mock")
     # Dev-only escape hatch for TLS-intercepting networks (corporate proxy /
     # antivirus): skip cert verification on outbound LLM API calls. NEVER set
     # this on a real deployment — it disables HTTPS trust for provider calls.

@@ -55,6 +55,7 @@ app.add_middleware(
 # hosted mode (the POC frontend never calls them, and they touch the app DB
 # only when invoked).
 from northwind_copilot.auth.router import router as auth_router  # noqa: E402
+from northwind_copilot.billing.router import router as billing_router  # noqa: E402
 from northwind_copilot.conversations.router import (  # noqa: E402
     router as conversations_router,
 )
@@ -65,6 +66,7 @@ app.include_router(auth_router)
 app.include_router(datasets_router)
 app.include_router(conversations_router)
 app.include_router(keys_router)
+app.include_router(billing_router)
 
 
 class Message(BaseModel):
@@ -134,6 +136,16 @@ async def usage(ctx=Depends(require_access)) -> dict:
         from northwind_copilot.keys.service import list_keys
 
         byok_providers = [k.provider for k in await list_keys(session, ctx.org_id)]
+
+        from sqlalchemy import select
+
+        from northwind_copilot.tenancy.models import Subscription
+
+        sub = (
+            await session.execute(
+                select(Subscription).where(Subscription.org_id == ctx.org_id)
+            )
+        ).scalar_one_or_none()
     trial_ends = org.trial_ends_at.isoformat() if org and org.trial_ends_at else None
     return {
         "hosted": True,
@@ -144,6 +156,12 @@ async def usage(ctx=Depends(require_access)) -> dict:
         "trial_queries_limit": ent.trial_queries,
         "trial_ends_at": trial_ends,
         "byok_providers": byok_providers,
+        "subscription_status": sub.status if sub else None,
+        "current_period_end": (
+            sub.current_period_end.isoformat()
+            if sub and sub.current_period_end
+            else None
+        ),
     }
 
 

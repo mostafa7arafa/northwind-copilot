@@ -50,6 +50,9 @@ services:
       # Sentry error tracking (optional; empty disables it entirely).
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      # Billing backend: "mock" completes purchases instantly (no money);
+      # switch to "paddle" once seller verification lands (Phase 2).
+      BILLING_PROVIDER: ${BILLING_PROVIDER:-mock}
       # Dev-only: skip TLS verification on outbound LLM calls for
       # TLS-intercepting networks. Leave empty in production.
       INSECURE_TLS: ${INSECURE_TLS:-}

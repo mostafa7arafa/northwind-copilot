@@ -270,6 +270,63 @@ class CreditLedger(Base):
     )
 
 
+class Subscription(Base):
+    """An org's paid subscription, mirrored from the billing provider.
+
+    One row per org (the org is the tenant *and* the billing unit). The
+    provider column says which backend owns the subscription (``mock`` in
+    development, ``paddle`` later) — the lifecycle code is provider-agnostic.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20), default="mock")
+    # The provider's subscription id (used for portal/cancel calls later).
+    external_id: Mapped[str] = mapped_column(String(120), default="")
+    plan: Mapped[str] = mapped_column(String(40))
+    # active | past_due | cancelled
+    status: Mapped[str] = mapped_column(String(12), default="active")
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        server_default=func.now(),
+        onupdate=_utcnow,
+    )
+
+
+class WebhookEvent(Base):
+    """A processed billing webhook, keyed by the provider's event id.
+
+    The unique ``external_event_id`` makes webhook processing idempotent:
+    replaying a delivery (providers retry; the mock's redirect can be
+    refreshed) inserts nothing and changes nothing.
+    """
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_event_id", name="uq_webhook_event"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    provider: Mapped[str] = mapped_column(String(20))
+    external_event_id: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(20), default="")
+    org_id: Mapped[str] = mapped_column(String(36), default="")
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
 class ApiKey(Base):
     """An org's stored BYOK provider key, encrypted at rest (Fernet).
 

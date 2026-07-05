@@ -36,13 +36,16 @@ export function UsageMeter() {
       : null;
   }
 
-  const low = ratio !== null && ratio < 0.15;
+  const pastDue = usage.subscription_status === "past_due";
+  const low = pastDue || (ratio !== null && ratio < 0.15);
 
   return (
     <div
       className="flex items-center gap-2 rounded-lg border border-hairline bg-surface px-2.5 py-1.5"
       title={
-        trial
+        pastDue
+          ? "Payment failed — service continues during the grace period"
+          : trial
           ? "Trial allowance — remaining questions"
           : byokOnly
           ? "Running on your own API key"

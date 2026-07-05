@@ -149,6 +149,21 @@ export interface UsageInfo {
   trial_queries_limit: number;
   trial_ends_at: string | null;
   byok_providers: string[];
+  subscription_status: "active" | "past_due" | "cancelled" | null;
+  current_period_end: string | null;
+}
+
+/** One tier of the public plan sheet, from GET /api/billing/plans. */
+export interface PlanInfo {
+  id: string;
+  price_usd: number;
+  credits_per_month: number;
+  max_datasets: number;
+  upload_cap_mb: number;
+  byok: boolean;
+  seats: number;
+  trial_days: number;
+  trial_queries: number;
 }
 
 /** Metadata of a stored BYOK key — the key itself is never returned. */

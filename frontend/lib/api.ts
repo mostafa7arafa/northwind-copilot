@@ -4,6 +4,7 @@ import type {
   ConversationMeta,
   DatasetMeta,
   ModelRegistry,
+  PlanInfo,
   Provider,
   UsageInfo,
   User,
@@ -160,6 +161,32 @@ export const keysApi = {
   },
   async remove(provider: "openai" | "openrouter"): Promise<void> {
     await fetch(`/api/keys/${provider}`, { method: "DELETE", ...withCreds });
+  },
+};
+
+// --- Billing ---------------------------------------------------------------
+
+export const billingApi = {
+  async plans(): Promise<PlanInfo[]> {
+    return json(await fetch("/api/billing/plans", { cache: "no-store", ...withCreds }));
+  },
+  /** Start a checkout; navigate the browser to the returned URL. */
+  async checkout(plan: string): Promise<string> {
+    const data = await json<{ checkout_url: string }>(
+      await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+        ...withCreds,
+      })
+    );
+    return data.checkout_url;
+  },
+  async portal(): Promise<string | null> {
+    const data = await json<{ portal_url: string | null }>(
+      await fetch("/api/billing/portal", { cache: "no-store", ...withCreds })
+    );
+    return data.portal_url;
   },
 };
 
