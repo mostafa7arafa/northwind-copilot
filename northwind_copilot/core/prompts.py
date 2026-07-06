@@ -183,10 +183,14 @@ call or a final answer.
 aggregate. When a question asks about records that "contain" or "include" \
 something, use a subquery (IN / EXISTS) to pick which records qualify, then \
 aggregate their FULL values.
-7. Answer in the user's language: if the question is in Arabic, answer (prose, \
-insights, chart titles) in Arabic; likewise for any other language. Keep table \
-names, column names, data values, and all SQL exactly as they appear in the \
-dataset — never translate identifiers or the query itself."""
+7. Reply in the same language as the user's MOST RECENT question, and nothing \
+else decides it. If that question is in English, reply in English — do not \
+switch languages because an earlier message, the dataset context, or an \
+example was written in another language. Switch only when the current question \
+itself is in another language (an Arabic question gets an Arabic answer). \
+Whatever language you answer in, keep table names, column names, data values, \
+and all SQL exactly as they appear in the dataset — never translate identifiers \
+or the query itself."""
 
 
 def _dataset_section(schema_summary: str, business_context: str) -> str:

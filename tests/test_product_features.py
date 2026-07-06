@@ -176,14 +176,17 @@ class TestQueryApi:
 
 
 class TestLanguageRule:
-    def test_dataset_prompt_answers_in_users_language(self):
+    def test_dataset_prompt_anchors_to_latest_question(self):
         from northwind_copilot.core.prompts import build_system_prompt
 
         prompt = build_system_prompt(
             is_local=False, supports_charts=True, dataset_summary="Table t: a"
         )
-        assert "user's language" in prompt
-        assert "Arabic" in prompt
+        # The rule anchors to the current question and names Arabic only as the
+        # switch case, so an English conversation stays English.
+        assert "MOST RECENT question" in prompt
+        assert "do not switch languages because an earlier message" in prompt
+        assert "Arabic" in prompt  # the wedge still works for Arabic questions
 
     def test_poc_prompt_is_unchanged(self):
         from northwind_copilot.core.prompts import SYSTEM_PROMPT, build_system_prompt
