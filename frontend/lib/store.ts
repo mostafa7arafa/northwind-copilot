@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  conversationsApi,
   fetchModels,
   fetchPreferences,
   fetchUsage,
@@ -130,6 +131,7 @@ interface State {
   toggleTurn: (turnId: string) => void;
   pinTurn: (turnId: string | null) => void;
   ask: (question: string) => Promise<void>;
+  sendFeedback: (turnId: string, vote: "up" | "down") => Promise<void>;
 }
 
 export const useStore = create<State>()(
@@ -382,6 +384,10 @@ export const useStore = create<State>()(
                   // Learn (or confirm) which server conversation this maps to.
                   set({ conversationId: e.id });
                   break;
+                case "turn":
+                  // The server-persisted turn id — needed to attach feedback.
+                  patch({ serverTurnId: e.id });
+                  break;
                 case "stage":
                   setStage(e.stage, e.status);
                   break;
@@ -466,6 +472,34 @@ export const useStore = create<State>()(
           });
         } finally {
           patch({ running: false });
+        }
+      },
+
+      sendFeedback: async (turnId, vote) => {
+        const { currentId, sessions, conversationId } = get();
+        const session = sessions.find((s) => s.id === currentId);
+        const turn = session?.turns.find((t) => t.id === turnId);
+        if (!turn?.serverTurnId || !conversationId) return;
+        const prev = turn.feedback;
+        // Optimistic: reflect the vote immediately; roll back on failure.
+        const apply = (feedback: "up" | "down" | undefined) =>
+          set({
+            sessions: get().sessions.map((s) =>
+              s.id !== currentId
+                ? s
+                : {
+                    ...s,
+                    turns: s.turns.map((t) =>
+                      t.id === turnId ? { ...t, feedback } : t
+                    ),
+                  }
+            ),
+          });
+        apply(vote);
+        try {
+          await conversationsApi.feedback(conversationId, turn.serverTurnId, vote);
+        } catch {
+          apply(prev);
         }
       },
     }),

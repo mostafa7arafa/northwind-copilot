@@ -241,12 +241,16 @@ async def _resolve_hosted_key(
     return _resolve_api_key(provider, None), False
 
 
-async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
+async def _resolve_dataset(
+    dataset_id: str | None, ctx, question: str = ""
+) -> object | None:
     """Load the requested dataset as a ``DatasetContext``, scoped to the org.
 
     Args:
         dataset_id: The dataset the caller asked to query, if any.
         ctx: The request's ``RequestContext`` (hosted mode) or ``None`` (POC).
+        question: This turn's question — used to pick the golden examples
+            (confirmed question→SQL pairs) most relevant to it.
 
     Returns:
         A ``DatasetContext`` when a ready, owned dataset is requested; ``None``
@@ -260,6 +264,7 @@ async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
         return None
     from fastapi import HTTPException, status
 
+    from northwind_copilot.datasets.golden import select_examples
     from northwind_copilot.query.agent_factory import DatasetContext
     from northwind_copilot.tenancy.db import get_sessionmaker
     from northwind_copilot.tenancy.models import Dataset
@@ -275,10 +280,12 @@ async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Dataset is still being prepared.",
             )
+        examples = await select_examples(session, dataset.id, question)
         return DatasetContext(
             sqlite_path=dataset.file_path,
             schema_summary=dataset.schema_summary,
             business_context=dataset.business_context,
+            golden_examples=tuple(examples),
         )
 
 
@@ -371,7 +378,9 @@ async def chat(
     config = EngineConfig(provider=body.provider, model=body.model, api_key=api_key)
     prefs = load_preferences()
     fallback = _build_fallback() if config.is_local else None
-    dataset = await _resolve_dataset(body.dataset_id, ctx)
+    dataset = await _resolve_dataset(
+        body.dataset_id, ctx, _last_question(body.messages)
+    )
 
     # Hosted mode: server owns history + persistence. POC: client sends history,
     # nothing is stored.
@@ -386,12 +395,15 @@ async def chat(
         meter = None
         finalized = False
 
-        async def finalize() -> dict | None:
-            """Persist the turn and settle usage exactly once; return the
-            usage payload, or ``None`` when there is nothing to report."""
+        async def finalize() -> tuple[dict | None, str | None]:
+            """Persist the turn and settle usage exactly once.
+
+            Returns:
+                ``(usage_payload, turn_id)`` — either may be ``None``.
+            """
             nonlocal finalized
             if finalized:
-                return None
+                return None, None
             finalized = True
             return await _finalize_turn(
                 conversation_id=conversation_id,
@@ -426,9 +438,16 @@ async def chat(
                 usage_meter=meter,
             ):
                 # Settle before forwarding `done` so the client learns this
-                # turn's cost and the updated balance as part of the stream.
+                # turn's server id (for feedback) and its cost as part of
+                # the stream.
                 if ctx and event.get("type") == "done":
-                    usage_payload = await finalize()
+                    usage_payload, turn_id = await finalize()
+                    if turn_id is not None:
+                        yield (
+                            "data: "
+                            + json.dumps({"type": "turn", "id": turn_id})
+                            + "\n\n"
+                        ).encode("utf-8")
                     if usage_payload is not None:
                         yield ("data: " + json.dumps(usage_payload) + "\n\n").encode(
                             "utf-8"
@@ -458,7 +477,7 @@ async def _finalize_turn(
     config: EngineConfig,
     meter,
     byok: bool,
-) -> dict | None:
+) -> tuple[dict | None, str | None]:
     """Persist the recorded turn and settle its usage, ignoring DB failures.
 
     Runs in the stream's ``finally`` path, so a turn is stored and billed even
@@ -466,11 +485,12 @@ async def _finalize_turn(
     as a chat failure — the answer already streamed to the user.
 
     Returns:
-        The ``usage`` SSE payload (``credits`` spent this turn plus the
-        remaining allowance), or ``None`` when nothing was metered.
+        ``(usage_payload, turn_id)``: the ``usage`` SSE payload (or ``None``
+        when nothing was metered) and the persisted turn's id (used by the
+        client to attach feedback).
     """
     if not (ctx and conversation_id):
-        return None
+        return None, None
     from northwind_copilot.conversations.service import persist_turn
     from northwind_copilot.metering.credits import settle, trial_queries_used
     from northwind_copilot.tenancy.db import get_sessionmaker
@@ -514,9 +534,9 @@ async def _finalize_turn(
                     "byok": byok,
                 }
             await session.commit()
-            return payload
+            return payload, (turn.id if turn is not None else None)
     except Exception:  # noqa: BLE001 - best-effort persistence
         import logging
 
         logging.getLogger(__name__).exception("failed to persist/settle turn")
-        return None
+        return None, None

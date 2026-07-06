@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, Unplug } from "lucide-react";
+import { Database, FilePlus2, Unplug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, datasetsApi } from "@/lib/api";
 import type { DatasetMeta } from "@/lib/types";
@@ -21,6 +21,10 @@ export function DatasetManager({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Which dataset the next picked file should be APPENDED to (multi-file
+  // datasets: the file's tables join the dataset instead of creating a new
+  // one). Null = the picker creates a new dataset.
+  const appendTo = useRef<string | null>(null);
 
   async function refresh() {
     try {
@@ -36,12 +40,22 @@ export function DatasetManager({
   }, []);
 
   async function onUpload(file: File) {
+    const target = appendTo.current;
+    appendTo.current = null;
     setBusy(true);
     setError("");
     try {
-      const ds = await datasetsApi.upload(file, file.name.replace(/\.[^.]+$/, ""));
-      await refresh();
-      if (ds.status === "ready") onSelect(ds.id);
+      if (target) {
+        // Append: the file's tables join the existing dataset (so questions
+        // can join across files).
+        await datasetsApi.addFile(target, file);
+        await refresh();
+        onSelect(target);
+      } else {
+        const ds = await datasetsApi.upload(file, file.name.replace(/\.[^.]+$/, ""));
+        await refresh();
+        if (ds.status === "ready") onSelect(ds.id);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Upload failed.");
     } finally {
@@ -141,6 +155,21 @@ export function DatasetManager({
                   : "· processing…"}
               </span>
             </button>
+            {d.status === "ready" && (
+              <button
+                type="button"
+                onClick={() => {
+                  appendTo.current = d.id;
+                  fileRef.current?.click();
+                }}
+                disabled={busy}
+                className="ml-2 text-ink-dim hover:text-electric disabled:opacity-50"
+                title={`Add a file to ${d.name} — its tables join this dataset`}
+                aria-label={`Add file to ${d.name}`}
+              >
+                <FilePlus2 size={13} />
+              </button>
+            )}
             <button
               onClick={() => onDelete(d.id)}
               className="ml-2 text-xs text-ink-dim hover:text-[var(--color-err)]"

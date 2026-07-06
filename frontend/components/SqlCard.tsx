@@ -1,9 +1,15 @@
 "use client";
 
 import Editor from "@monaco-editor/react";
-import { Download, Expand, Maximize2, Minimize2 } from "lucide-react";
+import { Download, Expand, Maximize2, Minimize2, Pencil, Play, Undo2 } from "lucide-react";
 import { useState } from "react";
+import { ApiError, datasetsApi } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import type { TableData } from "@/lib/types";
 import { CopyButton, GhostButton, Modal, Panel } from "./primitives";
+import { ResultsTable } from "./ResultsTable";
+
+const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
 const EDITOR_OPTIONS = {
   readOnly: true,
@@ -42,18 +48,61 @@ const applyDeskTheme = (monaco: {
   monaco.editor.setTheme("desk");
 };
 
-/** The generated SQL in a read-only Monaco editor with copy / expand / fullscreen / download. */
+/** The generated SQL in a Monaco editor with copy / expand / fullscreen /
+ * download — plus, on a hosted dataset, an edit-and-re-run mode: fix the
+ * query in place and execute it through the same read-only, time-boxed path
+ * the agent uses. Edited runs render their result inline and are never
+ * written back into the conversation. */
 export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
+  const activeDatasetId = useStore((s) => s.activeDatasetId);
   const [expanded, setExpanded] = useState(false);
   const [full, setFull] = useState(false);
+  // Edit & re-run state (hosted datasets only).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(sql);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<TableData | null>(null);
+  const [runError, setRunError] = useState("");
   // Monaco's real content height accounts for word-wrapped long lines, which a
   // raw newline count misses — a two-line-but-very-long query still needs room.
   const [contentH, setContentH] = useState(0);
-  const lines = sql.split("\n").length;
+  const shown = editing ? draft : sql;
+  const lines = shown.split("\n").length;
   const natural = contentH > 0 ? contentH + 8 : lines * 20 + 24;
   const height = expanded
     ? Math.min(Math.max(natural, 240), 600)
-    : Math.min(natural, 200);
+    : Math.min(Math.max(natural, editing ? 120 : 0), 200);
+
+  const editable = HOSTED && !!activeDatasetId;
+
+  const startEdit = () => {
+    setDraft(sql);
+    setResult(null);
+    setRunError("");
+    setEditing(true);
+  };
+
+  const stopEdit = () => {
+    setEditing(false);
+    setResult(null);
+    setRunError("");
+  };
+
+  const run = async () => {
+    if (!activeDatasetId || !draft.trim()) return;
+    setRunning(true);
+    setRunError("");
+    try {
+      setResult(await datasetsApi.query(activeDatasetId, draft));
+    } catch (err) {
+      setResult(null);
+      setRunError(
+        err instanceof ApiError ? err.message : "The query couldn't be run."
+      );
+    } finally {
+      setRunning(false);
+    }
+  };
 
   /** Register the theme and start tracking content height (recomputes on wrap). */
   const onEditorMount = (
@@ -69,13 +118,32 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
   return (
     <Panel
       eyebrow="SQL"
-      title={<span className="tape text-ink-dim">generated query</span>}
+      title={
+        <span className="tape text-ink-dim">
+          {editing ? "editing — runs against your dataset" : "generated query"}
+        </span>
+      }
       actions={
         <>
+          {editable && !editing && (
+            <GhostButton title="Edit & re-run" onClick={startEdit}>
+              <Pencil size={13} />
+            </GhostButton>
+          )}
+          {editing && (
+            <>
+              <GhostButton title="Run edited query" onClick={run}>
+                <Play size={13} /> {running ? "Running…" : "Run"}
+              </GhostButton>
+              <GhostButton title="Back to the original query" onClick={stopEdit}>
+                <Undo2 size={13} />
+              </GhostButton>
+            </>
+          )}
           <GhostButton
             title="Download .sql"
             onClick={() => {
-              const blob = new Blob([sql], { type: "text/sql" });
+              const blob = new Blob([shown], { type: "text/sql" });
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "query.sql";
@@ -93,21 +161,36 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
           <GhostButton title="Fullscreen" onClick={() => setFull(true)}>
             <Expand size={13} />
           </GhostButton>
-          <CopyButton text={sql} />
+          <CopyButton text={shown} />
         </>
       }
     >
-      <div style={{ borderLeft: `2px solid ${tint}` }}>
+      <div style={{ borderLeft: `2px solid ${editing ? "var(--color-warn, #eab308)" : tint}` }}>
         <Editor
           height={height}
           language="sql"
           theme="vs-dark"
-          value={sql}
-          options={EDITOR_OPTIONS}
+          value={shown}
+          options={{ ...EDITOR_OPTIONS, readOnly: !editing }}
+          onChange={(v) => editing && setDraft(v ?? "")}
           loading={<div className="p-4 text-[12px] text-ink-faint">Loading editor…</div>}
           onMount={onEditorMount}
         />
       </div>
+
+      {editing && runError && (
+        <p className="border-t border-hairline px-3 py-2 text-[12px] text-warn">
+          {runError}
+        </p>
+      )}
+      {editing && result && (
+        <div className="border-t border-hairline p-2">
+          <p className="mb-1 px-1 text-[11px] text-ink-faint">
+            Edited run — shown here only, not saved to the conversation.
+          </p>
+          <ResultsTable data={result} />
+        </div>
+      )}
 
       {full && (
         <Modal title="SQL · Esc to close" onClose={() => setFull(false)}>
@@ -116,7 +199,7 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
               height="100%"
               language="sql"
               theme="vs-dark"
-              value={sql}
+              value={shown}
               options={EDITOR_OPTIONS}
               loading={<div className="p-4 text-[12px] text-ink-faint">Loading editor…</div>}
               onMount={(_e, monaco) => applyDeskTheme(monaco)}

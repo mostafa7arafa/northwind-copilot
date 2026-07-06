@@ -41,6 +41,7 @@ export interface TableData {
 export type ChatEvent =
   | { type: "engine"; engine: Engine; provider: Provider; model: string }
   | { type: "conversation"; id: string }
+  | { type: "turn"; id: string }
   | { type: "stage"; stage: StageId; status: "active" | "done" }
   | { type: "sql"; sql: string; seq?: number }
   | ({ type: "table"; seq?: number } & TableData)
@@ -84,6 +85,11 @@ export interface Turn {
   error?: { message: string; detail?: string };
   running: boolean;
   collapsed: boolean;
+  /** Hosted mode: the server-persisted turn id (from the `turn` SSE event);
+   * required to attach feedback. */
+  serverTurnId?: string;
+  /** The user's thumbs vote on this turn, if any. */
+  feedback?: "up" | "down";
 }
 
 /** A turn's query artifacts, falling back to pre-multi-artifact fields. */

@@ -20,6 +20,7 @@ from northwind_copilot.datasets.schema_summary import generate_summary
 from northwind_copilot.tenancy.db import get_session
 from northwind_copilot.tenancy.deps import RequestContext, current_org
 from northwind_copilot.tenancy.models import Dataset
+from northwind_copilot.web.security import rate_limit
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -72,6 +73,12 @@ class ContextUpdate(BaseModel):
     """A business-context edit."""
 
     business_context: str = Field(max_length=settings.max_preferences_chars)
+
+
+class QueryRequest(BaseModel):
+    """A user-edited SQL statement to run against a dataset."""
+
+    sql: str = Field(min_length=1, max_length=10_000)
 
 
 def _source_type(filename: str) -> str:
@@ -157,6 +164,95 @@ async def upload_dataset(
         ) from exc
 
     return DatasetOut.of(dataset)
+
+
+@router.post("/{dataset_id}/files", response_model=DatasetOut)
+async def add_file(
+    dataset_id: str,
+    file: UploadFile = File(...),
+    ctx: RequestContext = Depends(current_org),
+    session: AsyncSession = Depends(get_session),
+) -> DatasetOut:
+    """Add another file's tables to an existing dataset (multi-file datasets).
+
+    Each appended upload becomes more tables in the same per-tenant SQLite, so
+    questions can join across files ("match sales.csv against targets.xlsx").
+    Table names are de-conflicted, never replaced.
+    """
+    from pathlib import Path
+
+    dataset = await _load_owned(session, dataset_id, ctx)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Dataset is not ready for more files.",
+        )
+    source_type = _source_type(file.filename or "")
+    data = await file.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="The file is empty."
+        )
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File exceeds the upload size limit.",
+        )
+    # Per-tier size cap only — adding a file doesn't consume a dataset slot,
+    # so the count check is passed a zero.
+    ensure_upload_allowed(ctx.plan, dataset_count=0, file_bytes=len(data))
+
+    name_hint = (file.filename or "data").rsplit(".", 1)[0]
+    path = Path(dataset.file_path)
+    try:
+        ingest_mod.append(source_type, data, path, name_hint=name_hint)
+    except ingest_mod.IngestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    finally:
+        # True-up from the file, not arithmetic: a multi-sheet append that
+        # failed partway must still leave the stored counts accurate.
+        if path.exists():
+            tables, rows = ingest_mod.dataset_stats(path)
+            dataset.table_count = tables
+            dataset.row_count = rows
+            dataset.size_bytes = path.stat().st_size
+            dataset.schema_summary = generate_summary(path)
+
+    return DatasetOut.of(dataset)
+
+
+@router.post("/{dataset_id}/query")
+async def run_query(
+    dataset_id: str,
+    body: QueryRequest,
+    ctx: RequestContext = Depends(current_org),
+    session: AsyncSession = Depends(get_session),
+    _rl: None = Depends(rate_limit),
+) -> dict:
+    """Run a user-edited SELECT against a dataset (SQL transparency).
+
+    Goes through the exact same read-only + query-timeout + row-cap path as
+    the agent's own result execution (``response.charting.run_sql``), so an
+    edited query can't do anything the agent couldn't.
+    """
+    dataset = await _load_owned(session, dataset_id, ctx)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Dataset is still being prepared.",
+        )
+    from northwind_copilot.response.charting import run_sql
+
+    table = run_sql(body.sql, dataset.file_path)
+    if table is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The query couldn't be run. Only SELECT statements are "
+            "allowed, and they must finish within the time budget.",
+        )
+    return table
 
 
 @router.get("", response_model=list[DatasetOut])

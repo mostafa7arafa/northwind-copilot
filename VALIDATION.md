@@ -150,6 +150,26 @@ When real payments arrive: implement `billing/paddle.py` against the
 webhook at `POST /api/billing/webhook` — routes, lifecycle, ledger, and the
 frontend don't change.
 
+## 9. Product differentiators 🔴
+
+All four ship in-code and are covered by unit/API tests; check the UX and the
+*answer quality* effects with a real LLM:
+
+- [ ] **Multi-file datasets**: upload `sales.csv`, then click the small
+      file-plus icon on the dataset row and add `targets.csv` → row/table
+      counts grow, and a question like "compare sales against targets by
+      region" produces a JOIN across both files
+- [ ] **SQL edit & re-run**: on any answer's SQL card, click the pencil →
+      edit the query → Run. The edited result renders inline (marked as not
+      saved); a non-SELECT edit gets a clean error
+- [ ] **Arabic answers**: ask a question in Arabic against an uploaded
+      dataset → prose/insights come back in Arabic, SQL stays untouched
+      (identifiers untranslated). POC/Northwind behaviour unchanged
+- [ ] **Feedback loop**: thumbs-up a correct answer → "Saved" note appears;
+      ask a *similar* question in a new conversation → the SQL follows the
+      confirmed approach (the prompt now carries the golden example).
+      Thumbs-down retracts it
+
 ## Known gaps (deliberately not built yet — don't test for these)
 
 - **Real payments** — the mock provider stands in for Paddle; no money moves.

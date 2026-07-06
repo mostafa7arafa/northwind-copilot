@@ -6,6 +6,7 @@ import type {
   ModelRegistry,
   PlanInfo,
   Provider,
+  TableData,
   UsageInfo,
   User,
 } from "./types";
@@ -103,6 +104,29 @@ export const datasetsApi = {
       })
     );
   },
+  /** Add another file's tables to an existing dataset (multi-file datasets). */
+  async addFile(id: string, file: File): Promise<DatasetMeta> {
+    const form = new FormData();
+    form.append("file", file);
+    return json(
+      await fetch(`/api/datasets/${id}/files`, {
+        method: "POST",
+        body: form,
+        ...withCreds,
+      })
+    );
+  },
+  /** Run a user-edited SELECT against a dataset (read-only, time-boxed). */
+  async query(id: string, sql: string): Promise<TableData> {
+    return json(
+      await fetch(`/api/datasets/${id}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sql }),
+        ...withCreds,
+      })
+    );
+  },
   async remove(id: string): Promise<void> {
     await fetch(`/api/datasets/${id}`, { method: "DELETE", ...withCreds });
   },
@@ -131,6 +155,21 @@ export const conversationsApi = {
   },
   async remove(id: string): Promise<void> {
     await fetch(`/api/conversations/${id}`, { method: "DELETE", ...withCreds });
+  },
+  /** Thumbs-vote a turn; up on a dataset turn stores a golden example. */
+  async feedback(
+    conversationId: string,
+    turnId: string,
+    vote: "up" | "down"
+  ): Promise<{ vote: string; golden_example: boolean }> {
+    return json(
+      await fetch(`/api/conversations/${conversationId}/turns/${turnId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vote }),
+        ...withCreds,
+      })
+    );
   },
 };
 

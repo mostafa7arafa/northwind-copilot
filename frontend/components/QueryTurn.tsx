@@ -1,7 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ChevronDown, Cloud, Cpu, Pin } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  Cloud,
+  Cpu,
+  Pin,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import type { Turn } from "@/lib/types";
 import { turnCharts, turnQueries } from "@/lib/types";
 import { useStore } from "@/lib/store";
@@ -34,6 +42,53 @@ const block = {
   animate: { opacity: 1, y: 0 },
   transition: { type: "spring" as const, stiffness: 180, damping: 26 },
 };
+
+const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
+
+/** Thumbs on a finished turn. A thumbs-up on a dataset-backed answer stores
+ * its (question → SQL) as a confirmed example the analyst reuses — the
+ * feedback loop that makes answers improve with use. */
+function FeedbackButtons({ turn }: { turn: Turn }) {
+  const sendFeedback = useStore((s) => s.sendFeedback);
+  if (!HOSTED || turn.running || !turn.serverTurnId) return null;
+  return (
+    <div className="mt-1 flex items-center gap-1">
+      <button
+        type="button"
+        title="Good answer — remember this SQL for similar questions"
+        aria-label="Thumbs up"
+        onClick={() => sendFeedback(turn.id, "up")}
+        className={cn(
+          "rounded-md p-1.5 transition-colors hover:bg-surface-2",
+          turn.feedback === "up"
+            ? "text-electric"
+            : "text-ink-faint hover:text-ink"
+        )}
+      >
+        <ThumbsUp size={13} />
+      </button>
+      <button
+        type="button"
+        title="Wrong or unhelpful answer"
+        aria-label="Thumbs down"
+        onClick={() => sendFeedback(turn.id, "down")}
+        className={cn(
+          "rounded-md p-1.5 transition-colors hover:bg-surface-2",
+          turn.feedback === "down"
+            ? "text-warn"
+            : "text-ink-faint hover:text-ink"
+        )}
+      >
+        <ThumbsDown size={13} />
+      </button>
+      {turn.feedback === "up" && (
+        <span className="text-[11px] text-ink-faint">
+          Saved — the analyst will reuse this approach.
+        </span>
+      )}
+    </div>
+  );
+}
 
 function EngineBadge({ turn }: { turn: Turn }) {
   const cloud = turn.engine === "cloud";
@@ -205,6 +260,8 @@ export function QueryTurn({ turn }: { turn: Turn }) {
                     />
                   </motion.div>
                 )}
+
+                <FeedbackButtons turn={turn} />
               </div>
             </div>
           </motion.div>

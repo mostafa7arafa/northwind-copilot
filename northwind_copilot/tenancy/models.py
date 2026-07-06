@@ -270,6 +270,56 @@ class CreditLedger(Base):
     )
 
 
+class TurnFeedback(Base):
+    """A thumbs-up/down on one analyst turn.
+
+    One row per turn (re-voting updates it). ``vote`` is +1 or -1. Feedback is
+    the raw signal; a thumbs-up on a dataset-backed turn also materialises a
+    :class:`GoldenExample` for that dataset.
+    """
+
+    __tablename__ = "turn_feedback"
+
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("turns.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    vote: Mapped[int] = mapped_column(Integer)  # +1 | -1
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class GoldenExample(Base):
+    """A confirmed (question → SQL) pair for one dataset.
+
+    Thumbs-up turns become golden examples; the top-k most similar are
+    injected into future prompts for that dataset, so the product gets better
+    the more a customer corrects it. Selection is plain keyword overlap +
+    recency (deliberately no embeddings in v1).
+    """
+
+    __tablename__ = "golden_examples"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("datasets.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[str] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"))
+    # The turn the example came from; a later thumbs-down retracts it.
+    source_turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("turns.id", ondelete="SET NULL"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(String)
+    sql: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
 class Subscription(Base):
     """An org's paid subscription, mirrored from the billing provider.
 
