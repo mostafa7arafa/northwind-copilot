@@ -74,6 +74,20 @@ class Settings:
             multi-turn history survives the trim step.
         ollama_base_url: Base URL of the Ollama daemon. Configurable so the
             service works in Docker (``http://ollama:11434``) as well as locally.
+        ollama_num_ctx: Context window handed to Ollama. MUST be >=
+            ``max_context_tokens``: Ollama's own default is 4096 and it truncates
+            an over-long prompt silently *from the head*, which drops the system
+            prompt (and, in hosted mode, the injected schema summary) with no
+            error. The trim middleware is only a real guard when the window it
+            trims to actually exists.
+        ollama_num_predict: Hard cap on tokens generated per model call, so one
+            runaway completion cannot eat the whole turn deadline.
+        ollama_keep_alive: How long Ollama keeps the model resident after a
+            request. Long enough that consecutive turns skip the reload.
+        ollama_reasoning: Whether local thinking-capable models emit a
+            chain-of-thought before answering. Measured on the SQL benchmark:
+            thinking cost 2.5x latency (26.4s -> 10.5s avg) for identical
+            accuracy (9/11 both ways, same two failures), so it is off.
         cors_allow_origins: Comma-separated list of browser origins allowed to
             call the API. Defaults to the local Next.js dev server.
         auth_token: Optional shared bearer token. When set, every API request
@@ -108,6 +122,10 @@ class Settings:
 
     # --- Web service / deployment -----------------------------------------
     ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_num_ctx: int = _env_int("OLLAMA_NUM_CTX", 8192)
+    ollama_num_predict: int = _env_int("OLLAMA_NUM_PREDICT", 1024)
+    ollama_keep_alive: str = _env("OLLAMA_KEEP_ALIVE", "30m")
+    ollama_reasoning: bool = _env_bool("OLLAMA_REASONING", False)
     cors_allow_origins: str = _env(
         "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
     )

@@ -100,13 +100,9 @@ def build_model(config: EngineConfig) -> BaseChatModel:
         ValueError: If the provider is unknown.
     """
     if config.provider == "ollama":
-        from langchain_ollama import ChatOllama
+        from northwind_copilot.infra.llm import build_ollama_model
 
-        return ChatOllama(
-            model=config.model,
-            temperature=settings.temperature,
-            base_url=settings.ollama_base_url,
-        )
+        return build_ollama_model(config.model)
 
     if config.provider in _CLOUD_PROVIDERS:
         from langchain_openai import ChatOpenAI
