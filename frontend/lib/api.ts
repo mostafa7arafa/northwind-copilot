@@ -1,9 +1,13 @@
 import type {
+  ApiKeyMeta,
   ChatEvent,
   ConversationMeta,
   DatasetMeta,
   ModelRegistry,
+  PlanInfo,
   Provider,
+  TableData,
+  UsageInfo,
   User,
 } from "./types";
 
@@ -100,6 +104,29 @@ export const datasetsApi = {
       })
     );
   },
+  /** Add another file's tables to an existing dataset (multi-file datasets). */
+  async addFile(id: string, file: File): Promise<DatasetMeta> {
+    const form = new FormData();
+    form.append("file", file);
+    return json(
+      await fetch(`/api/datasets/${id}/files`, {
+        method: "POST",
+        body: form,
+        ...withCreds,
+      })
+    );
+  },
+  /** Run a user-edited SELECT against a dataset (read-only, time-boxed). */
+  async query(id: string, sql: string): Promise<TableData> {
+    return json(
+      await fetch(`/api/datasets/${id}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sql }),
+        ...withCreds,
+      })
+    );
+  },
   async remove(id: string): Promise<void> {
     await fetch(`/api/datasets/${id}`, { method: "DELETE", ...withCreds });
   },
@@ -128,6 +155,77 @@ export const conversationsApi = {
   },
   async remove(id: string): Promise<void> {
     await fetch(`/api/conversations/${id}`, { method: "DELETE", ...withCreds });
+  },
+  /** Thumbs-vote a turn; up on a dataset turn stores a golden example. */
+  async feedback(
+    conversationId: string,
+    turnId: string,
+    vote: "up" | "down"
+  ): Promise<{ vote: string; golden_example: boolean }> {
+    return json(
+      await fetch(`/api/conversations/${conversationId}/turns/${turnId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vote }),
+        ...withCreds,
+      })
+    );
+  },
+};
+
+// --- Usage & BYOK keys -----------------------------------------------------
+
+/** Fetch the org's plan + remaining allowance, or null in the POC. */
+export async function fetchUsage(): Promise<UsageInfo | null> {
+  const res = await fetch("/api/usage", { cache: "no-store", ...withCreds });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.hosted ? (data as UsageInfo) : null;
+}
+
+export const keysApi = {
+  async list(): Promise<ApiKeyMeta[]> {
+    return json(await fetch("/api/keys", { cache: "no-store", ...withCreds }));
+  },
+  /** Store a provider key server-side (write-only; returns metadata). */
+  async set(provider: "openai" | "openrouter", key: string): Promise<ApiKeyMeta> {
+    return json(
+      await fetch(`/api/keys/${provider}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+        ...withCreds,
+      })
+    );
+  },
+  async remove(provider: "openai" | "openrouter"): Promise<void> {
+    await fetch(`/api/keys/${provider}`, { method: "DELETE", ...withCreds });
+  },
+};
+
+// --- Billing ---------------------------------------------------------------
+
+export const billingApi = {
+  async plans(): Promise<PlanInfo[]> {
+    return json(await fetch("/api/billing/plans", { cache: "no-store", ...withCreds }));
+  },
+  /** Start a checkout; navigate the browser to the returned URL. */
+  async checkout(plan: string): Promise<string> {
+    const data = await json<{ checkout_url: string }>(
+      await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+        ...withCreds,
+      })
+    );
+    return data.checkout_url;
+  },
+  async portal(): Promise<string | null> {
+    const data = await json<{ portal_url: string | null }>(
+      await fetch("/api/billing/portal", { cache: "no-store", ...withCreds })
+    );
+    return data.portal_url;
   },
 };
 

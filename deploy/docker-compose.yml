@@ -47,6 +47,12 @@ services:
       # turn; the backend builds the tracer itself (works with INSECURE_TLS).
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
+      # Sentry error tracking (optional; empty disables it entirely).
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      # Billing backend: "mock" completes purchases instantly (no money);
+      # switch to "paddle" once seller verification lands (Phase 2).
+      BILLING_PROVIDER: ${BILLING_PROVIDER:-mock}
       # Dev-only: skip TLS verification on outbound LLM calls for
       # TLS-intercepting networks. Leave empty in production.
       INSECURE_TLS: ${INSECURE_TLS:-}
@@ -62,6 +68,9 @@ services:
         # Bake hosted mode into the bundle so the auth gate + dataset manager
         # are active. This is the hosted product build.
         NEXT_PUBLIC_HOSTED_MODE: "true"
+        # Browser-side Sentry (optional; baked into the bundle at build time).
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     restart: unless-stopped
     depends_on:
       - backend

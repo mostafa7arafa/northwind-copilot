@@ -5,6 +5,7 @@ import { authApi } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { EnginePicker } from "./EnginePicker";
 import { BrandMark } from "./BrandMark";
+import { UsageMeter } from "./UsageMeter";
 
 const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
@@ -39,6 +40,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2">
+        <UsageMeter />
         <EnginePicker />
         <button
           onClick={() => openSettings(true)}

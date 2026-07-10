@@ -14,11 +14,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from northwind_copilot.core.config import settings
+from northwind_copilot.core.observability import init_sentry
 from northwind_copilot.query.agent_factory import EngineConfig, Provider
 from northwind_copilot.response.streaming import stream_chat
 from northwind_copilot.web.models_registry import list_all_providers
 from northwind_copilot.web.preferences import load_preferences, save_preferences
 from northwind_copilot.web.security import rate_limit, require_access
+
+# Error tracking is opt-in (SENTRY_DSN) and a no-op in the POC and tests.
+init_sentry()
 
 
 @asynccontextmanager
@@ -51,14 +55,18 @@ app.add_middleware(
 # hosted mode (the POC frontend never calls them, and they touch the app DB
 # only when invoked).
 from northwind_copilot.auth.router import router as auth_router  # noqa: E402
+from northwind_copilot.billing.router import router as billing_router  # noqa: E402
 from northwind_copilot.conversations.router import (  # noqa: E402
     router as conversations_router,
 )
 from northwind_copilot.datasets.router import router as datasets_router  # noqa: E402
+from northwind_copilot.keys.router import router as keys_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(datasets_router)
 app.include_router(conversations_router)
+app.include_router(keys_router)
+app.include_router(billing_router)
 
 
 class Message(BaseModel):
@@ -105,6 +113,56 @@ async def health() -> dict:
 async def models() -> dict:
     """List local (Ollama) and cloud (OpenAI/OpenRouter) model choices."""
     return await list_all_providers()
+
+
+@app.get("/api/usage")
+async def usage(ctx=Depends(require_access)) -> dict:
+    """The caller org's plan and remaining allowance (drives the UsageMeter).
+
+    In the POC (no tenant) this returns ``{"hosted": false}`` so the frontend
+    can simply not render a meter.
+    """
+    if ctx is None:
+        return {"hosted": False}
+    from northwind_copilot.billing.entitlements import get_entitlements
+    from northwind_copilot.metering.credits import trial_queries_used
+    from northwind_copilot.tenancy.db import get_sessionmaker
+    from northwind_copilot.tenancy.models import Org
+
+    ent = get_entitlements(ctx.plan)
+    async with get_sessionmaker()() as session:
+        org = await session.get(Org, ctx.org_id)
+        used = await trial_queries_used(session, ctx.org_id)
+        from northwind_copilot.keys.service import list_keys
+
+        byok_providers = [k.provider for k in await list_keys(session, ctx.org_id)]
+
+        from sqlalchemy import select
+
+        from northwind_copilot.tenancy.models import Subscription
+
+        sub = (
+            await session.execute(
+                select(Subscription).where(Subscription.org_id == ctx.org_id)
+            )
+        ).scalar_one_or_none()
+    trial_ends = org.trial_ends_at.isoformat() if org and org.trial_ends_at else None
+    return {
+        "hosted": True,
+        "plan": ctx.plan,
+        "credits_remaining": float(org.credit_balance) if org else 0.0,
+        "credits_per_month": ent.credits_per_month,
+        "trial_queries_used": used,
+        "trial_queries_limit": ent.trial_queries,
+        "trial_ends_at": trial_ends,
+        "byok_providers": byok_providers,
+        "subscription_status": sub.status if sub else None,
+        "current_period_end": (
+            sub.current_period_end.isoformat()
+            if sub and sub.current_period_end
+            else None
+        ),
+    }
 
 
 @app.get("/api/preferences", dependencies=[Depends(require_access)])
@@ -156,12 +214,43 @@ def _resolve_api_key(provider: str, browser_key: str | None) -> str | None:
     return os.getenv(env_var) if env_var else None
 
 
-async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
+async def _resolve_hosted_key(
+    provider: str, browser_key: str | None, ctx
+) -> tuple[str | None, bool]:
+    """Resolve the key for a hosted turn, distinguishing BYOK from metered.
+
+    Resolution order: the org's stored (encrypted) key, then a key supplied in
+    the request body — both are the customer's own account, so those turns are
+    BYOK (recorded but never charged). Only when neither exists does the turn
+    run on the server's key and get metered.
+
+    Returns:
+        ``(api_key, byok)``.
+    """
+    if provider not in ("openai", "openrouter"):
+        return None, False  # Local Ollama: no key, nothing to meter against.
+    from northwind_copilot.keys.service import resolve_org_key
+    from northwind_copilot.tenancy.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        stored = await resolve_org_key(session, org_id=ctx.org_id, provider=provider)
+    if stored:
+        return stored, True
+    if browser_key:
+        return browser_key, True
+    return _resolve_api_key(provider, None), False
+
+
+async def _resolve_dataset(
+    dataset_id: str | None, ctx, question: str = ""
+) -> object | None:
     """Load the requested dataset as a ``DatasetContext``, scoped to the org.
 
     Args:
         dataset_id: The dataset the caller asked to query, if any.
         ctx: The request's ``RequestContext`` (hosted mode) or ``None`` (POC).
+        question: This turn's question — used to pick the golden examples
+            (confirmed question→SQL pairs) most relevant to it.
 
     Returns:
         A ``DatasetContext`` when a ready, owned dataset is requested; ``None``
@@ -175,6 +264,7 @@ async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
         return None
     from fastapi import HTTPException, status
 
+    from northwind_copilot.datasets.golden import select_examples
     from northwind_copilot.query.agent_factory import DatasetContext
     from northwind_copilot.tenancy.db import get_sessionmaker
     from northwind_copilot.tenancy.models import Dataset
@@ -190,10 +280,12 @@ async def _resolve_dataset(dataset_id: str | None, ctx) -> object | None:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Dataset is still being prepared.",
             )
+        examples = await select_examples(session, dataset.id, question)
         return DatasetContext(
             sqlite_path=dataset.file_path,
             schema_summary=dataset.schema_summary,
             business_context=dataset.business_context,
+            golden_examples=tuple(examples),
         )
 
 
@@ -257,6 +349,15 @@ async def _prepare_conversation(body: ChatRequest, ctx) -> tuple[str, list[dict]
         return convo.id, history
 
 
+async def _check_allowance(ctx, byok: bool) -> None:
+    """Run the pre-flight credit/trial check for a hosted turn (402 on fail)."""
+    from northwind_copilot.metering.credits import check_and_reserve
+    from northwind_copilot.tenancy.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        await check_and_reserve(session, org_id=ctx.org_id, plan=ctx.plan, byok=byok)
+
+
 @app.post("/api/chat", dependencies=[Depends(rate_limit)])
 async def chat(
     body: ChatRequest,
@@ -267,14 +368,19 @@ async def chat(
     ``ctx`` is a ``RequestContext`` in hosted mode (used to scope dataset access
     and persist the conversation) or ``None`` in the single-user POC.
     """
-    config = EngineConfig(
-        provider=body.provider,
-        model=body.model,
-        api_key=_resolve_api_key(body.provider, body.api_key),
-    )
+    byok = False
+    if ctx:
+        api_key, byok = await _resolve_hosted_key(body.provider, body.api_key, ctx)
+        # Out-of-allowance turns are rejected before any model call is made.
+        await _check_allowance(ctx, byok)
+    else:
+        api_key = _resolve_api_key(body.provider, body.api_key)
+    config = EngineConfig(provider=body.provider, model=body.model, api_key=api_key)
     prefs = load_preferences()
     fallback = _build_fallback() if config.is_local else None
-    dataset = await _resolve_dataset(body.dataset_id, ctx)
+    dataset = await _resolve_dataset(
+        body.dataset_id, ctx, _last_question(body.messages)
+    )
 
     # Hosted mode: server owns history + persistence. POC: client sends history,
     # nothing is stored.
@@ -286,10 +392,35 @@ async def chat(
 
     async def event_source() -> AsyncIterator[bytes]:
         recorder = None
+        meter = None
+        finalized = False
+
+        async def finalize() -> tuple[dict | None, str | None]:
+            """Persist the turn and settle usage exactly once.
+
+            Returns:
+                ``(usage_payload, turn_id)`` — either may be ``None``.
+            """
+            nonlocal finalized
+            if finalized:
+                return None, None
+            finalized = True
+            return await _finalize_turn(
+                conversation_id=conversation_id,
+                question=_last_question(body.messages),
+                recorder=recorder,
+                ctx=ctx,
+                config=config,
+                meter=meter,
+                byok=byok,
+            )
+
         if ctx:
             from northwind_copilot.conversations.service import TurnRecorder
+            from northwind_copilot.metering.usage import UsageAccumulator
 
             recorder = TurnRecorder()
+            meter = UsageAccumulator()
             # Tell the client which conversation this turn belongs to.
             yield (
                 "data: "
@@ -304,16 +435,31 @@ async def chat(
                 fallback=fallback,
                 session_id=body.session_id,
                 dataset=dataset,
+                usage_meter=meter,
             ):
+                # Settle before forwarding `done` so the client learns this
+                # turn's server id (for feedback) and its cost as part of
+                # the stream.
+                if ctx and event.get("type") == "done":
+                    usage_payload, turn_id = await finalize()
+                    if turn_id is not None:
+                        yield (
+                            "data: "
+                            + json.dumps({"type": "turn", "id": turn_id})
+                            + "\n\n"
+                        ).encode("utf-8")
+                    if usage_payload is not None:
+                        yield ("data: " + json.dumps(usage_payload) + "\n\n").encode(
+                            "utf-8"
+                        )
                 if recorder is not None:
                     recorder.observe(event)
                 yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
         finally:
-            # Persist the turn even on disconnect/timeout (this runs on cancel).
-            if ctx and recorder is not None:
-                await _persist_completed_turn(
-                    conversation_id, _last_question(body.messages), recorder
-                )
+            # Persist + settle even on disconnect/timeout (this runs on cancel),
+            # so abandoned turns are still recorded and billed.
+            if ctx:
+                await finalize()
 
     return StreamingResponse(
         event_source(),
@@ -322,29 +468,75 @@ async def chat(
     )
 
 
-async def _persist_completed_turn(
-    conversation_id: str | None, question: str, recorder
-) -> None:
-    """Write the recorded turn to the DB, ignoring persistence failures.
+async def _finalize_turn(
+    *,
+    conversation_id: str | None,
+    question: str,
+    recorder,
+    ctx,
+    config: EngineConfig,
+    meter,
+    byok: bool,
+) -> tuple[dict | None, str | None]:
+    """Persist the recorded turn and settle its usage, ignoring DB failures.
 
-    A DB hiccup here must not surface as a chat failure — the answer already
-    streamed to the user.
+    Runs in the stream's ``finally`` path, so a turn is stored and billed even
+    when the client disconnects mid-answer. A DB hiccup here must not surface
+    as a chat failure — the answer already streamed to the user.
+
+    Returns:
+        ``(usage_payload, turn_id)``: the ``usage`` SSE payload (or ``None``
+        when nothing was metered) and the persisted turn's id (used by the
+        client to attach feedback).
     """
-    if not conversation_id:
-        return
+    if not (ctx and conversation_id):
+        return None, None
     from northwind_copilot.conversations.service import persist_turn
+    from northwind_copilot.metering.credits import settle, trial_queries_used
     from northwind_copilot.tenancy.db import get_sessionmaker
 
     try:
         async with get_sessionmaker()() as session:
-            await persist_turn(
-                session,
-                conversation_id=conversation_id,
-                question=question,
-                recorder=recorder,
-            )
+            turn = None
+            if recorder is not None:
+                turn = await persist_turn(
+                    session,
+                    conversation_id=conversation_id,
+                    question=question,
+                    recorder=recorder,
+                )
+            payload: dict | None = None
+            # A turn that failed before any model call has no usage — don't
+            # record an empty event (it would eat a trial query for nothing).
+            if meter is not None and meter.has_usage:
+                credits, remaining = await settle(
+                    session,
+                    org_id=ctx.org_id,
+                    plan=ctx.plan,
+                    turn_id=turn.id if turn is not None else None,
+                    provider=config.provider,
+                    model=config.model,
+                    usage=meter,
+                    byok=byok,
+                )
+                if remaining is None and not byok:
+                    # Trial turns: "remaining" is the query allowance.
+                    from northwind_copilot.billing.entitlements import (
+                        get_entitlements,
+                    )
+
+                    used = await trial_queries_used(session, ctx.org_id)
+                    remaining = max(0, get_entitlements(ctx.plan).trial_queries - used)
+                payload = {
+                    "type": "usage",
+                    "credits": float(credits),
+                    "remaining": float(remaining) if remaining is not None else None,
+                    "byok": byok,
+                }
             await session.commit()
+            return payload, (turn.id if turn is not None else None)
     except Exception:  # noqa: BLE001 - best-effort persistence
         import logging
 
-        logging.getLogger(__name__).exception("failed to persist turn")
+        logging.getLogger(__name__).exception("failed to persist/settle turn")
+        return None, None

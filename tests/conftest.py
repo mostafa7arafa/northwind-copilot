@@ -26,6 +26,8 @@ def hosted_settings(tmp_path, monkeypatch):
     Patches the ``settings`` binding in every module that reads the fields we
     override, so the whole request path sees hosted mode consistently.
     """
+    from cryptography.fernet import Fernet
+
     db_path = tmp_path / "app.sqlite"
     tenants_dir = tmp_path / "tenants"
     test_settings = dataclasses.replace(
@@ -34,6 +36,7 @@ def hosted_settings(tmp_path, monkeypatch):
         app_db_url=f"sqlite+aiosqlite:///{db_path.as_posix()}",
         tenant_data_dir=str(tenants_dir),
         auth_token="",
+        key_encryption_secret=Fernet.generate_key().decode(),
     )
     for module_path in (
         "northwind_copilot.core.config",
@@ -44,6 +47,7 @@ def hosted_settings(tmp_path, monkeypatch):
         "northwind_copilot.auth.service",
         "northwind_copilot.datasets.storage",
         "northwind_copilot.datasets.router",
+        "northwind_copilot.keys.service",
     ):
         import importlib
 

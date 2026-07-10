@@ -161,3 +161,162 @@ def ingest(source_type: str, data: bytes, dest: Path) -> IngestResult:
     if source_type == "sqlite":
         return ingest_sqlite(data, dest)
     raise IngestError(f"Unsupported source type: {source_type!r}")
+
+
+# ---------------------------------------------------------------------------
+# Multi-file datasets: append a file's tables to an existing dataset
+# ---------------------------------------------------------------------------
+
+
+def _existing_tables(dest: Path) -> set[str]:
+    """Return the table names already present in a dataset file."""
+    conn = sqlite3.connect(f"file:{dest}?mode=ro", uri=True)
+    try:
+        return {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _unique_table(base: str, taken: set[str]) -> str:
+    """Return ``base`` or the first ``base_N`` not already taken."""
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}_{n}" in taken:
+        n += 1
+    return f"{base}_{n}"
+
+
+def dataset_stats(dest: Path) -> tuple[int, int]:
+    """Recount a dataset file's tables and total rows (source of truth).
+
+    Used after an append so the stored counts always reflect the file, even
+    if a multi-sheet append failed partway through.
+    """
+    conn = sqlite3.connect(f"file:{dest}?mode=ro", uri=True)
+    try:
+        tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        rows = 0
+        for table in tables:
+            try:
+                rows += conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            except sqlite3.Error:
+                continue
+        return len(tables), rows
+    finally:
+        conn.close()
+
+
+def append(
+    source_type: str, data: bytes, dest: Path, *, name_hint: str = "data"
+) -> IngestResult:
+    """Add one more file's tables to an existing dataset SQLite.
+
+    This is what makes datasets *relational across files*: each appended
+    upload becomes another table in the same per-tenant database, so the
+    agent can join sales.csv against targets.xlsx. Table names come from the
+    filename (CSV) or sheet names (XLSX) and are de-conflicted with an ``_N``
+    suffix rather than replaced — appends never clobber existing data.
+
+    Args:
+        source_type: ``csv`` | ``xlsx`` | ``sqlite``.
+        data: The uploaded file's bytes (untrusted; same posture as `ingest`).
+        dest: The dataset's existing SQLite file.
+        name_hint: Base table name for single-table sources (the filename stem).
+
+    Returns:
+        Counts for the tables/rows *added* by this call.
+
+    Raises:
+        IngestError: When the file can't be parsed, the dataset file is
+            missing, or the table cap would be exceeded.
+    """
+    if not dest.exists():
+        raise IngestError("Dataset file not found.")
+    taken = _existing_tables(dest)
+
+    def _check_cap(adding: int) -> None:
+        if len(taken) + adding > _MAX_TABLES:
+            raise IngestError(f"Too many tables (max {_MAX_TABLES}).")
+
+    if source_type == "csv":
+        import io
+
+        try:
+            df = pd.read_csv(io.BytesIO(data))
+        except Exception as exc:  # noqa: BLE001
+            raise IngestError(f"Could not parse CSV: {exc}") from exc
+        if df.empty:
+            raise IngestError("The CSV file has no rows.")
+        _check_cap(1)
+        table = _unique_table(_sane_identifier(name_hint, "data"), taken)
+        rows = _write_frame(df, table, dest)
+        return IngestResult(table_count=1, row_count=rows)
+
+    if source_type == "xlsx":
+        import io
+
+        try:
+            sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
+        except Exception as exc:  # noqa: BLE001
+            raise IngestError(f"Could not parse Excel file: {exc}") from exc
+        non_empty = {n: df for n, df in sheets.items() if not df.empty}
+        if not non_empty:
+            raise IngestError("The Excel file has no non-empty sheets.")
+        _check_cap(len(non_empty))
+        total_rows = 0
+        added = 0
+        for sheet_name, df in non_empty.items():
+            table = _unique_table(_sane_identifier(sheet_name, "sheet"), taken)
+            taken.add(table)
+            total_rows += _write_frame(df, table, dest)
+            added += 1
+        return IngestResult(table_count=added, row_count=total_rows)
+
+    if source_type == "sqlite":
+        if not data.startswith(_SQLITE_MAGIC):
+            raise IngestError("File is not a valid SQLite database.")
+        tmp = dest.with_suffix(".append.tmp")
+        tmp.write_bytes(data)
+        try:
+            ro = sqlite3.connect(f"file:{tmp}?mode=ro&immutable=1", uri=True)
+            try:
+                if ro.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise IngestError("The SQLite database failed an integrity check.")
+                master = ro.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+                real = [
+                    name
+                    for name, sql in master
+                    if not name.startswith("sqlite_")
+                    and "virtual table" not in (sql or "").lower()
+                ]
+                if not real:
+                    raise IngestError("The SQLite database has no readable tables.")
+                _check_cap(len(real))
+                total_rows = 0
+                for name in real:
+                    df = pd.read_sql(f'SELECT * FROM "{name}"', ro)
+                    table = _unique_table(_sane_identifier(name, "table"), taken)
+                    taken.add(table)
+                    total_rows += _write_frame(df, table, dest)
+            finally:
+                ro.close()
+        finally:
+            tmp.unlink(missing_ok=True)
+        return IngestResult(table_count=len(real), row_count=total_rows)
+
+    raise IngestError(f"Unsupported source type: {source_type!r}")

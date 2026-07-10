@@ -1,6 +1,6 @@
 # Manual Validation Guide — Multi-Tenant SaaS (Phase 0)
 
-The automated tests (167 backend + frontend typecheck/build) prove the units and
+The automated tests (206 backend + frontend typecheck/build) prove the units and
 the tenant-isolation logic, but they **do not** prove the product works
 end-to-end: they mock the LLM, never run a real agent turn, never exercise the
 browser, and use SQLite instead of Postgres. This guide is what *you* need to do
@@ -102,14 +102,86 @@ summary + the business-context box. If answers are weak, edit the dataset's
 
 ---
 
+## 7. Phase 1: metering, entitlements, BYOK 🔴
+
+Automated tests cover the ledger math, tier gates, key encryption, and the
+settle-on-disconnect path (mocked agent). What needs a real browser + LLM:
+
+- [ ] Header shows the **UsageMeter**: a fresh trial account shows `30/30 queries`,
+      and the count drops after each answer (live from the SSE `usage` event)
+- [ ] Kill the browser tab mid-answer → the `usage_events` row (and, on a paid
+      plan, the `credit_ledger` debit) still lands — check the DB
+- [ ] Upgrade an org manually (`UPDATE orgs SET plan='starter'`, grant credits
+      via `metering.credits.grant_credits`) → meter switches to credits and
+      counts down by ~1 credit per mini-class turn
+- [ ] Out of allowance → chat returns a clean **402** message, not a crash
+- [ ] Trial accounts get **403** when storing a BYOK key; on Starter+, Settings
+      stores a key (shows `•••• last4`), chat then reports `byok: true` usage
+      with 0 credits, and Clear removes it
+- [ ] Second dataset upload on trial → clean 403 quota message
+- [ ] Set `SENTRY_DSN` and force an error → event arrives with the `error_id`
+      tag matching the id shown in chat; no `sk-…` values anywhere in the event
+
+## 8. Billing lifecycle (mock provider) 🔴
+
+`BILLING_PROVIDER=mock` (the default) mimics the full transaction flow — real
+checkout URL, signed webhooks, idempotent processing, credit grants — with no
+money. Automated tests cover the lifecycle; check the UX in a browser:
+
+- [ ] Settings → **Plan & billing** lists Starter/Pro/Team with prices; your
+      current plan shows trial queries left
+- [ ] Click **Upgrade** on Pro → browser bounces through the mock checkout and
+      lands back on `/?billing=success`; the header meter now shows
+      `pro · 1200 credits`
+- [ ] Refresh the checkout completion URL from history → balance does **not**
+      double (idempotent webhook replay)
+- [ ] Simulate a renewal:
+      `curl -k -X POST https://localhost/api/billing/mock/simulate -H "Content-Type: application/json" -b "nw_session=<cookie>" -d '{"kind":"renewed"}'`
+      → leftover credits expire, fresh 1,200 granted (ledger shows
+      `rollover_expiry` + `grant`)
+- [ ] Simulate `{"kind":"payment_failed"}` → meter turns amber; Settings shows
+      the grace-period banner; chat still works
+- [ ] Simulate `{"kind":"cancelled"}` → plan drops to expired trial: chat
+      returns 402, but conversations/datasets stay readable
+- [ ] Buy again after cancelling → back to active with a fresh grant
+
+When real payments arrive: implement `billing/paddle.py` against the
+`BillingProvider` protocol, set `BILLING_PROVIDER=paddle`, and point Paddle's
+webhook at `POST /api/billing/webhook` — routes, lifecycle, ledger, and the
+frontend don't change.
+
+## 9. Product differentiators 🔴
+
+All four ship in-code and are covered by unit/API tests; check the UX and the
+*answer quality* effects with a real LLM:
+
+- [ ] **Multi-file datasets**: upload `sales.csv`, then click the small
+      file-plus icon on the dataset row and add `targets.csv` → row/table
+      counts grow, and a question like "compare sales against targets by
+      region" produces a JOIN across both files
+- [ ] **SQL edit & re-run**: on any answer's SQL card, click the pencil →
+      edit the query → Run. The edited result renders inline (marked as not
+      saved); a non-SELECT edit gets a clean error
+- [ ] **Arabic answers**: ask a question in Arabic against an uploaded
+      dataset → prose/insights come back in Arabic, SQL stays untouched
+      (identifiers untranslated). POC/Northwind behaviour unchanged
+- [ ] **Feedback loop**: thumbs-up a correct answer → "Saved" note appears;
+      ask a *similar* question in a new conversation → the SQL follows the
+      confirmed approach (the prompt now carries the golden example).
+      Thumbs-down retracts it
+
 ## Known gaps (deliberately not built yet — don't test for these)
 
-- **Billing / plans / credits** — no metering or payment yet (Phase 1–2). Everyone is effectively unlimited; there's a hard 25 MB upload cap in code.
-- **BYOK key storage** — the per-user encrypted key store is Phase 1. Today the server's `OPENROUTER_API_KEY` serves all hosted turns.
+- **Real payments** — the mock provider stands in for Paddle; no money moves.
+  Paddle (Phase 2) is one new module behind the same protocol + env flip.
+- **Automatic renewals** — nothing schedules `renewed` events yet (a real
+  provider fires them; the mock has the `/simulate` drill). No dunning emails.
+- **Org invites / seats** — the Team tier's seat count is defined but not
+  enforced (no invite endpoint yet).
 - **Google OAuth** — endpoints not wired yet; email+password only.
-- **Backups, Sentry, rate-limit-by-user** — Phase 1 ops. (LangSmith tracing IS
-  wired: set `LANGSMITH_API_KEY` in `deploy/.env` and every agent turn is
-  traced — works even with `INSECURE_TLS=1`.)
+- **Rate-limit-by-user** — the limiter is still keyed by client IP.
+- **Ops installs** — `deploy/backup.sh` + restore drill, UptimeRobot, staging
+  compose project: manual steps in [deploy/OPS.md](deploy/OPS.md).
 - **Dataset schema LLM enrichment** — only the mechanical schema summary is generated so far (the `describe` hook exists, unused).
 
 ## If something breaks

@@ -12,6 +12,8 @@ dependencies = [
     "faiss-cpu>=1.8",
     "sqlalchemy>=2.0",
     "python-dotenv>=1.0",
+    "openevals>=0.2.0",
+    "truststore>=0.10.4",
 ]
 
 [dependency-groups]
@@ -28,6 +30,10 @@ web = [
     "email-validator>=2.0",
     "pandas>=2.0",
     "openpyxl>=3.1",
+    # Fernet encryption for stored BYOK provider keys.
+    "cryptography>=42.0",
+    # Error tracking (opt-in via SENTRY_DSN; the app runs fine without a DSN).
+    "sentry-sdk[fastapi]>=2.0",
 ]
 dev = [
     "pytest>=8.0",

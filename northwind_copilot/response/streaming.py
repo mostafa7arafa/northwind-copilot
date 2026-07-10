@@ -223,6 +223,7 @@ async def stream_chat(
     fallback: Any | None = None,
     session_id: str | None = None,
     dataset: DatasetContext | None = None,
+    usage_meter: Any | None = None,
 ) -> AsyncIterator[dict]:
     """Run the agent for one turn and yield structured pipeline events.
 
@@ -235,6 +236,10 @@ async def stream_chat(
             LangSmith groups every turn of a conversation into one thread.
         dataset: The uploaded dataset to query (hosted mode). When ``None`` the
             agent runs against the configured Northwind database (POC).
+        usage_meter: Optional ``metering.usage.UsageAccumulator``. When given,
+            every streamed message's token usage is folded into it, so the
+            caller can settle credits — including on disconnect/timeout, since
+            accumulation happens as updates arrive, not at the end.
 
     Yields:
         Event dicts: ``engine``, ``stage``, ``sql``, ``table``, ``chart``,
@@ -376,6 +381,8 @@ async def stream_chat(
                 if not isinstance(node_state, dict):
                     continue
                 for msg in node_state.get("messages", []):
+                    if usage_meter is not None:
+                        usage_meter.observe(msg)
                     tool_calls = getattr(msg, "tool_calls", None) or []
                     for call in tool_calls:
                         name = call.get("name", "")
@@ -467,6 +474,11 @@ async def stream_chat(
             config.model,
             exc,
         )
+        # Mirror the correlation id into Sentry (no-op when not configured),
+        # so the id a user reports finds the full event.
+        from northwind_copilot.core.observability import report_error
+
+        report_error(exc, error_id=error_id)
         yield {
             "type": "error",
             "message": "The query couldn't be completed. Please try again.",

@@ -72,11 +72,14 @@ class DatasetContext:
             injected into the system prompt in place of the Northwind rules.
         business_context: User-editable domain notes (formulas, definitions)
             appended to the prompt.
+        golden_examples: ``(question, sql)`` pairs the user confirmed correct
+            for this dataset (thumbs-up feedback), injected as ground truth.
     """
 
     sqlite_path: str
     schema_summary: str = ""
     business_context: str = ""
+    golden_examples: tuple[tuple[str, str], ...] = ()
 
     @property
     def database_uri(self) -> str:
@@ -97,13 +100,9 @@ def build_model(config: EngineConfig) -> BaseChatModel:
         ValueError: If the provider is unknown.
     """
     if config.provider == "ollama":
-        from langchain_ollama import ChatOllama
+        from northwind_copilot.infra.llm import build_ollama_model
 
-        return ChatOllama(
-            model=config.model,
-            temperature=settings.temperature,
-            base_url=settings.ollama_base_url,
-        )
+        return build_ollama_model(config.model)
 
     if config.provider in _CLOUD_PROVIDERS:
         from langchain_openai import ChatOpenAI
@@ -179,6 +178,7 @@ def build_agent_for(
         user_preferences=user_preferences,
         dataset_summary=dataset.schema_summary if dataset else None,
         business_context=dataset.business_context if dataset else "",
+        golden_examples=dataset.golden_examples if dataset else (),
     )
 
     # The Northwind knowledge base (search_docs) is POC-only; an uploaded

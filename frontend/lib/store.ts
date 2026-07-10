@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { fetchModels, fetchPreferences, savePreferences, streamChat } from "./api";
+import {
+  conversationsApi,
+  fetchModels,
+  fetchPreferences,
+  fetchUsage,
+  savePreferences,
+  streamChat,
+} from "./api";
 import type {
   Engine,
   ModelRegistry,
@@ -9,6 +16,7 @@ import type {
   StageId,
   TableData,
   Turn,
+  UsageInfo,
 } from "./types";
 import { turnQueries } from "./types";
 
@@ -101,9 +109,12 @@ interface State {
   // conversation this session maps to (learned from the `conversation` event).
   activeDatasetId: string | null;
   conversationId: string | null;
+  // Hosted mode: plan + remaining allowance (drives the header UsageMeter).
+  usage: UsageInfo | null;
 
   // actions
   init: () => Promise<void>;
+  refreshUsage: () => Promise<void>;
   setEngine: (engine: Engine) => void;
   setProvider: (provider: Provider) => void;
   setModel: (model: string) => void;
@@ -120,6 +131,7 @@ interface State {
   toggleTurn: (turnId: string) => void;
   pinTurn: (turnId: string | null) => void;
   ask: (question: string) => Promise<void>;
+  sendFeedback: (turnId: string, vote: "up" | "down") => Promise<void>;
 }
 
 export const useStore = create<State>()(
@@ -141,9 +153,19 @@ export const useStore = create<State>()(
       queryCount: 0,
       activeDatasetId: null,
       conversationId: null,
+      usage: null,
+
+      refreshUsage: async () => {
+        try {
+          set({ usage: await fetchUsage() });
+        } catch {
+          /* meter is decorative; never block the app on it */
+        }
+      },
 
       init: async () => {
         if (!get().currentId) set({ currentId: get().sessions[0].id });
+        void get().refreshUsage();
         try {
           const [registry, preferences] = await Promise.all([
             fetchModels(),
@@ -362,6 +384,10 @@ export const useStore = create<State>()(
                   // Learn (or confirm) which server conversation this maps to.
                   set({ conversationId: e.id });
                   break;
+                case "turn":
+                  // The server-persisted turn id — needed to attach feedback.
+                  patch({ serverTurnId: e.id });
+                  break;
                 case "stage":
                   setStage(e.stage, e.status);
                   break;
@@ -407,6 +433,26 @@ export const useStore = create<State>()(
                 case "insights":
                   patch({ insights: { text: e.text, bullets: e.bullets } });
                   break;
+                case "usage": {
+                  // Live-update the meter from the stream; trial turns report
+                  // remaining *queries*, paid turns the remaining balance.
+                  const u = get().usage;
+                  if (!u || e.byok || e.remaining === null) break;
+                  if (u.plan === "trial") {
+                    set({
+                      usage: {
+                        ...u,
+                        trial_queries_used: Math.max(
+                          0,
+                          u.trial_queries_limit - e.remaining
+                        ),
+                      },
+                    });
+                  } else {
+                    set({ usage: { ...u, credits_remaining: e.remaining } });
+                  }
+                  break;
+                }
                 case "final":
                   patch({ answer: e.text });
                   set({ queryCount: get().queryCount + 1 });
@@ -426,6 +472,34 @@ export const useStore = create<State>()(
           });
         } finally {
           patch({ running: false });
+        }
+      },
+
+      sendFeedback: async (turnId, vote) => {
+        const { currentId, sessions, conversationId } = get();
+        const session = sessions.find((s) => s.id === currentId);
+        const turn = session?.turns.find((t) => t.id === turnId);
+        if (!turn?.serverTurnId || !conversationId) return;
+        const prev = turn.feedback;
+        // Optimistic: reflect the vote immediately; roll back on failure.
+        const apply = (feedback: "up" | "down" | undefined) =>
+          set({
+            sessions: get().sessions.map((s) =>
+              s.id !== currentId
+                ? s
+                : {
+                    ...s,
+                    turns: s.turns.map((t) =>
+                      t.id === turnId ? { ...t, feedback } : t
+                    ),
+                  }
+            ),
+          });
+        apply(vote);
+        try {
+          await conversationsApi.feedback(conversationId, turn.serverTurnId, vote);
+        } catch {
+          apply(prev);
         }
       },
     }),

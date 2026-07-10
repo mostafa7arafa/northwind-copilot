@@ -41,12 +41,13 @@ export interface TableData {
 export type ChatEvent =
   | { type: "engine"; engine: Engine; provider: Provider; model: string }
   | { type: "conversation"; id: string }
+  | { type: "turn"; id: string }
   | { type: "stage"; stage: StageId; status: "active" | "done" }
   | { type: "sql"; sql: string; seq?: number }
   | ({ type: "table"; seq?: number } & TableData)
   | { type: "chart"; option: Record<string, unknown>; inferred: boolean; seq?: number }
   | { type: "insights"; text: string; bullets: string[] }
-  | { type: "usage"; credits: number; remaining: number }
+  | { type: "usage"; credits: number; remaining: number | null; byok?: boolean }
   | { type: "final"; text: string }
   | { type: "error"; message: string; detail?: string }
   | { type: "done" };
@@ -84,6 +85,11 @@ export interface Turn {
   error?: { message: string; detail?: string };
   running: boolean;
   collapsed: boolean;
+  /** Hosted mode: the server-persisted turn id (from the `turn` SSE event);
+   * required to attach feedback. */
+  serverTurnId?: string;
+  /** The user's thumbs vote on this turn, if any. */
+  feedback?: "up" | "down";
 }
 
 /** A turn's query artifacts, falling back to pre-multi-artifact fields. */
@@ -138,4 +144,37 @@ export interface ConversationMeta {
   title: string;
   dataset_id: string | null;
   turn_count: number;
+}
+
+/** The org's plan + remaining allowance, from GET /api/usage. */
+export interface UsageInfo {
+  plan: string;
+  credits_remaining: number;
+  credits_per_month: number;
+  trial_queries_used: number;
+  trial_queries_limit: number;
+  trial_ends_at: string | null;
+  byok_providers: string[];
+  subscription_status: "active" | "past_due" | "cancelled" | null;
+  current_period_end: string | null;
+}
+
+/** One tier of the public plan sheet, from GET /api/billing/plans. */
+export interface PlanInfo {
+  id: string;
+  price_usd: number;
+  credits_per_month: number;
+  max_datasets: number;
+  upload_cap_mb: number;
+  byok: boolean;
+  seats: number;
+  trial_days: number;
+  trial_queries: number;
+}
+
+/** Metadata of a stored BYOK key — the key itself is never returned. */
+export interface ApiKeyMeta {
+  provider: string;
+  last4: string;
+  set_at: string;
 }

@@ -182,7 +182,15 @@ call or a final answer.
 6. Distinguish filtering to QUALIFY a group from filtering the values you \
 aggregate. When a question asks about records that "contain" or "include" \
 something, use a subquery (IN / EXISTS) to pick which records qualify, then \
-aggregate their FULL values."""
+aggregate their FULL values.
+7. Reply in the same language as the user's MOST RECENT question, and nothing \
+else decides it. If that question is in English, reply in English — do not \
+switch languages because an earlier message, the dataset context, or an \
+example was written in another language. Switch only when the current question \
+itself is in another language (an Arabic question gets an Arabic answer). \
+Whatever language you answer in, keep table names, column names, data values, \
+and all SQL exactly as they appear in the dataset — never translate identifiers \
+or the query itself."""
 
 
 def _dataset_section(schema_summary: str, business_context: str) -> str:
@@ -197,6 +205,27 @@ def _dataset_section(schema_summary: str, business_context: str) -> str:
     return section
 
 
+def _examples_section(golden_examples) -> str:
+    """Format user-confirmed (question → SQL) pairs for the prompt.
+
+    These come from thumbs-up feedback on earlier answers for the same
+    dataset — treat them as ground truth for formulas, joins, and idioms.
+    """
+    blocks = []
+    for question, sql in golden_examples:
+        q = (question or "").strip()
+        s = (sql or "").strip()
+        if q and s:
+            blocks.append(f"Q: {q}\nSQL:\n{s}")
+    if not blocks:
+        return ""
+    return (
+        "\n\nConfirmed examples for this dataset (the user verified these "
+        "answers were correct — follow their formulas, joins, and column "
+        "choices when the question is similar):\n\n" + "\n\n".join(blocks)
+    )
+
+
 def build_system_prompt(
     *,
     is_local: bool,
@@ -204,6 +233,7 @@ def build_system_prompt(
     user_preferences: str = "",
     dataset_summary: str | None = None,
     business_context: str = "",
+    golden_examples=(),
 ) -> str:
     """Assemble the request-scoped system prompt.
 
@@ -228,14 +258,19 @@ def build_system_prompt(
             ``None`` for the Northwind POC path.
         business_context: Per-dataset domain notes, appended when a dataset is
             in play.
+        golden_examples: ``(question, sql)`` pairs the user confirmed correct
+            for this dataset (thumbs-up feedback), injected as ground truth.
+            Only used on the dataset path.
 
     Returns:
         The full system prompt string for this request.
     """
     if dataset_summary is not None:
         # Uploaded-dataset path: generic base + this dataset's context.
-        base = GENERIC_ANALYST_PROMPT + _dataset_section(
-            dataset_summary, business_context
+        base = (
+            GENERIC_ANALYST_PROMPT
+            + _dataset_section(dataset_summary, business_context)
+            + _examples_section(golden_examples)
         )
         prompt = (
             base

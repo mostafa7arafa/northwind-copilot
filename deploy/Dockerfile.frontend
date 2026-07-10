@@ -26,6 +26,12 @@ COPY frontend ./
 # a runtime env var would be ignored by the already-built bundle.
 ARG NEXT_PUBLIC_HOSTED_MODE=""
 ENV NEXT_PUBLIC_HOSTED_MODE=$NEXT_PUBLIC_HOSTED_MODE
+# Browser-side Sentry: a DSN is not a secret (it can only ingest events), but
+# it is inlined at build time like every NEXT_PUBLIC_* value.
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT="production"
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN \
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT=$NEXT_PUBLIC_SENTRY_ENVIRONMENT
 RUN if [ -n "$INSECURE_TLS" ]; then export NODE_TLS_REJECT_UNAUTHORIZED=0; fi; \
     npm run build
 

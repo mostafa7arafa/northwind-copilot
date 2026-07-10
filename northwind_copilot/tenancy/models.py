@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -215,3 +217,181 @@ class Turn(Base):
     )
 
     conversation: Mapped[Conversation] = relationship(back_populates="turns")
+
+
+class UsageEvent(Base):
+    """One analyst turn's token consumption, priced in credits.
+
+    Recorded for every hosted turn — including BYOK turns (``byok=True``,
+    ``credits=0``) so fair-use analytics see the full picture. The credit
+    *charge* lives in ``credit_ledger``; this table is the per-turn evidence.
+    """
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("turns.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), default="")
+    model: Mapped[str] = mapped_column(String(200), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    credits: Mapped[float] = mapped_column(Numeric(12, 4), default=0)
+    byok: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class CreditLedger(Base):
+    """Append-only credit movements for an org; balance = SUM(delta).
+
+    ``orgs.credit_balance`` caches the running balance (updated in the same
+    transaction, under row lock on Postgres) so entitlement checks are a
+    single-row read; this table stays the auditable source of truth.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    delta: Mapped[float] = mapped_column(Numeric(12, 4))
+    # grant | usage | adjustment | rollover_expiry
+    reason: Mapped[str] = mapped_column(String(20))
+    balance_after: Mapped[float] = mapped_column(Numeric(12, 4))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class TurnFeedback(Base):
+    """A thumbs-up/down on one analyst turn.
+
+    One row per turn (re-voting updates it). ``vote`` is +1 or -1. Feedback is
+    the raw signal; a thumbs-up on a dataset-backed turn also materialises a
+    :class:`GoldenExample` for that dataset.
+    """
+
+    __tablename__ = "turn_feedback"
+
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("turns.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    vote: Mapped[int] = mapped_column(Integer)  # +1 | -1
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class GoldenExample(Base):
+    """A confirmed (question → SQL) pair for one dataset.
+
+    Thumbs-up turns become golden examples; the top-k most similar are
+    injected into future prompts for that dataset, so the product gets better
+    the more a customer corrects it. Selection is plain keyword overlap +
+    recency (deliberately no embeddings in v1).
+    """
+
+    __tablename__ = "golden_examples"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("datasets.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[str] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"))
+    # The turn the example came from; a later thumbs-down retracts it.
+    source_turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("turns.id", ondelete="SET NULL"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(String)
+    sql: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class Subscription(Base):
+    """An org's paid subscription, mirrored from the billing provider.
+
+    One row per org (the org is the tenant *and* the billing unit). The
+    provider column says which backend owns the subscription (``mock`` in
+    development, ``paddle`` later) — the lifecycle code is provider-agnostic.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20), default="mock")
+    # The provider's subscription id (used for portal/cancel calls later).
+    external_id: Mapped[str] = mapped_column(String(120), default="")
+    plan: Mapped[str] = mapped_column(String(40))
+    # active | past_due | cancelled
+    status: Mapped[str] = mapped_column(String(12), default="active")
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        server_default=func.now(),
+        onupdate=_utcnow,
+    )
+
+
+class WebhookEvent(Base):
+    """A processed billing webhook, keyed by the provider's event id.
+
+    The unique ``external_event_id`` makes webhook processing idempotent:
+    replaying a delivery (providers retry; the mock's redirect can be
+    refreshed) inserts nothing and changes nothing.
+    """
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_event_id", name="uq_webhook_event"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    provider: Mapped[str] = mapped_column(String(20))
+    external_event_id: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(20), default="")
+    org_id: Mapped[str] = mapped_column(String(36), default="")
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
+
+
+class ApiKey(Base):
+    """An org's stored BYOK provider key, encrypted at rest (Fernet).
+
+    Write-only by contract: the API returns only ``{provider, last4, set_at}``
+    after a key is stored — the plaintext never travels back to any client.
+    """
+
+    __tablename__ = "api_keys"
+
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), primary_key=True)
+    encrypted_key: Mapped[str] = mapped_column(String)
+    last4: Mapped[str] = mapped_column(String(4), default="")
+    set_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
+    )
