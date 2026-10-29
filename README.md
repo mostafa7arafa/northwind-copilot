@@ -4,12 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-A local-first natural-language-to-SQL agent over the Northwind retail database.
-Ask a question in plain English; the agent lists tables, reads the schema,
-consults an internal knowledge base, writes SQL, runs it, and answers with the
-numbers — never inventing figures. It runs primarily on a local Ollama model
-(`gemma4-12b`) and only escalates to a cloud model (`gpt-4.1-mini` on OpenAI)
-when the local one fails or returns nothing usable.
+A personal, local-first workspace for chatting with your data. Upload CSV,
+XLSX, or SQLite files, or explore the built-in Northwind sample. Inspect and
+edit SQL, save conversations, and export tables and charts. Use Ollama locally
+or choose OpenAI/OpenRouter—no login, organizations, billing, or subscriptions.
+
+The separate static Northwind agent uses Ollama (`gemma4-12b`) with optional
+OpenAI fallback (`gpt-4.1-mini`) on errors or empty responses. The web app lets
+you choose its engine directly. The previous SaaS implementation is preserved
+on the local `saas/paused` branch; this product is intentionally single-user.
 
 It ships three ways to use it:
 
@@ -86,9 +89,10 @@ tool call. `tools` is a single node. On this static graph it exposes
 `sql_db_list_tables`, `sql_db_schema`, `sql_db_query`, `sql_db_query_checker`,
 and `search_docs` (FAISS over `docs/*.md`).
 
-For a function-by-function walkthrough, see the [architecture datasheet](docs/architecture.html). GitHub shows that file as source; it renders via a raw HTML preview: <https://htmlpreview.github.io/?https://github.com/mostafa7arafa/northwind-copilot/blob/master/docs/architecture.html>.
+For the web request path and local storage boundaries, see the
+[architecture guide](docs/maintenance/architecture.md).
 
-Everything Python lives in the single package `northwind_copilot/`, split into
+Application and evaluation Python code lives in the single package `northwind_copilot/`, split into
 concern-focused layers. Dependencies point **inward**: `web` → `response` →
 `query` → `infra` → `core`; nothing in `core` imports anything above it.
 `core` is config, KPI definitions, and prompts. `infra` is the database, the
@@ -102,12 +106,9 @@ database is `data/northwind.sqlite` (orders span 2012–2023, not classic
 
 ### Package layout
 
-The runtime graph above is not a folder map. The existing package boundaries
-are shown below; arrows show principal analyst dependencies and the web
-service's hosted integration points, not every import. Hosted packages also
-share tenancy/configuration and have cross-domain dependencies (for example,
-dataset routes use `web.security`). No module relocation is needed to match
-this layout.
+The runtime graph above is not a folder map. The diagram below shows the
+principal package dependencies, not every import. Datasets and conversations
+use a local persistence layer; there is no account or tenant context.
 
 ```mermaid
 flowchart TD
@@ -121,24 +122,22 @@ flowchart TD
         web --> response --> query --> infra --> core
         evaluation --> query
     end
-    subgraph hosted["northwind_copilot/ — hosted-domain packages"]
-        auth["auth/"]
-        tenancy["tenancy/"]
-        datasets["datasets/"]
-        conversations["conversations/"]
-        metering["metering/"]
-        billing["billing/"]
-        keys["keys/"]
+    subgraph workspace["northwind_copilot/ — personal workspace"]
+        datasets["datasets/ — upload, schema, golden examples"]
+        conversations["conversations/ — saved history and feedback"]
+        persistence["persistence/ — local SQLite metadata"]
+        datasets --> persistence
+        conversations --> persistence
     end
-    web --> auth & tenancy & datasets & conversations & metering & billing & keys
+    web --> datasets & conversations & persistence
     frontend["frontend/ — Next.js"] -->|HTTP / SSE| web
     langgraph["langgraph.json"] --> query
 ```
 
 `northwind_copilot/eval/` contains Python code; root `eval/results/` stores
-benchmark artifacts. `migrations/` contains Alembic history, `deploy/` holds
-runtime packaging, `tests/` holds the offline suite, and `scripts/` holds
-support tooling. `docs/*.md` is runtime knowledge-base content; maintenance
+benchmark artifacts. `tests/` holds the offline suite, `scripts/` holds
+support tooling, and `dev.sh` starts the personal workspace. SaaS migrations
+and production deployment files belong to `saas/paused`, not this branch. `docs/*.md` is runtime knowledge-base content; maintenance
 notes belong in subdirectories such as `docs/maintenance/`.
 
 ### Key design decisions
@@ -163,14 +162,23 @@ notes belong in subdirectories such as `docs/maintenance/`.
 
 ## Quickstart
 
-Requires **Python 3.12+** and [uv](https://docs.astral.sh/uv/). Local inference
-also needs [Ollama](https://ollama.com/) running with `gemma4-12b` pulled. To
-skip the GPU, use [Cloud-only](#cloud-only-no-gpu) below.
+Requires **Python 3.12+**, [uv](https://docs.astral.sh/uv/), **Node.js 20+**,
+npm, curl, and Bash (Linux/macOS or WSL).
 
 ```bash
-uv sync --group dev --group web
-cp .env.example .env                  # then edit — see "Configuration" below
+./dev.sh --setup                      # install locked dependencies once
+# Optional: cp .env.example .env, then configure your model keys
+./dev.sh                             # http://127.0.0.1:3000
 ```
+
+Ctrl+C stops both servers. No Docker, database service, account setup, or
+separate LangGraph server is needed. Ollama is only required when you choose a
+local engine; start it separately and pull a model first.
+
+Uploads and saved conversations live in `data/datasets/` and
+`data/workspace.sqlite`. Old SaaS data is not automatically imported or
+modified. This app is **loopback-only**, not a public service; do not expose it
+through a public tunnel or reverse proxy.
 
 ### Cloud-only (no GPU)
 
@@ -186,13 +194,12 @@ From [`.env.example`](.env.example):
 | `OPENAI_API_KEY` | Required. Builds the OpenAI fallback and the RAG embeddings. |
 | `FALLBACK_MODEL` | Cloud model the static graph escalates to. Default `gpt-4.1-mini`. |
 | `EMBEDDING_MODEL` | OpenAI embeddings for `search_docs`. Default `text-embedding-3-small`. Uses the same `OPENAI_API_KEY`. |
-| `APP_AUTH_TOKEN` | Optional. When it is blank, the web API will not spend the server's `OPENAI_API_KEY` for an anonymous caller — paste a key in the Trading Desk settings, or set this token. |
+| `OPENROUTER_API_KEY` | Optional alternative cloud provider for the web app. |
 
 `PRIMARY_MODEL` and `OLLAMA_BASE_URL` are unused once you select the OpenAI
-engine in the web app. A second cloud provider, OpenRouter, reads
-`OPENROUTER_API_KEY`. That name is not in the root `.env.example` (it is in
-[`deploy/.env.example`](deploy/.env.example)); the root configuration table
-lists it for the multi-turn judge.
+engine in the web app. Configure server keys in `.env` or enter a key in
+Settings (browser-entered keys stay in memory). Protected API routes accept
+only loopback clients/hosts and allowed local browser origins.
 
 ```bash
 uv run langgraph dev                  # Ollama is tried first; errors escalate
@@ -233,11 +240,7 @@ The full-stack "Trading Desk" (FastAPI backend + Next.js frontend) has its own
 guide: **[WEBAPP.md](WEBAPP.md)**. In short:
 
 ```bash
-# backend (repo root)
-LANGCHAIN_TRACING_V2=false \
-  uv run uvicorn northwind_copilot.web.app:app --port 8000
-# frontend (in ./frontend)
-npm install && npm run dev            # http://localhost:3000
+./dev.sh                             # backend + frontend, with readiness checks
 ```
 
 ### Run the benchmark
@@ -402,7 +405,9 @@ defaults in [`core/config.py`](northwind_copilot/core/config.py):
 | `PRIMARY_MODEL` | `gemma4-12b` | Local-first Ollama model |
 | `FALLBACK_MODEL` | `gpt-4.1-mini` | Cloud escalation model |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embeddings for RAG |
-| `NORTHWIND_DATABASE_URI` | `sqlite:///data/northwind.sqlite` | The database |
+| `NORTHWIND_DATABASE_URI` | `sqlite:///data/northwind.sqlite` | Sample analyst database |
+| `WORKSPACE_DATABASE_URL` | `sqlite+aiosqlite:///data/workspace.sqlite` | Personal workspace metadata |
+| `DATASET_DATA_DIR` | `data/datasets` | Uploaded dataset files |
 | `DOCS_DIR` | `docs` | Markdown knowledge base |
 | `FAISS_PATH` | `.faiss_index` | On-disk vector index |
 | `REINDEX` | `false` | Rebuild the FAISS index on next load |
@@ -411,7 +416,7 @@ defaults in [`core/config.py`](northwind_copilot/core/config.py):
 | `OLLAMA_REASONING` | `false` | Chain-of-thought on local thinking models |
 | `OLLAMA_NUM_PREDICT` | `1024` | Cap on tokens generated per model call |
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model resident |
-| `OPENROUTER_API_KEY` | — | Required only by the multi-turn eval's judge |
+| `OPENROUTER_API_KEY` | — | Web cloud engine and multi-turn eval judge |
 
 > **Do not** use `DATABASE_URI` — LangGraph reserves that name for its own
 > persistence layer and overwrites it with `:memory:` under `langgraph dev`.
@@ -432,7 +437,7 @@ defaults in [`core/config.py`](northwind_copilot/core/config.py):
 # Test suite (offline — no LLM or network calls)
 uv run pytest
 
-# Coverage (includes branches; cleanup baseline: 75% overall)
+# Coverage (includes branches and missing paths)
 uv run pytest --cov --cov-report=term-missing
 
 # Dead-code gate (80%+ confidence; exact false positives documented inline)
@@ -446,9 +451,10 @@ uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
 ```
 
 The tests use fakes for external services so the suite never touches Ollama,
-OpenAI, or the network. The [cleanup audit](docs/maintenance/cleanup.md) records
-coverage limits, confirmed Vulture false positives, and deferred review items. `run_sql` and `build_database` run against the real
-`northwind.sqlite` **read-only**.
+OpenAI, or the network. The [historical cleanup audit](docs/maintenance/cleanup.md)
+records the pre-simplification baseline. Current manual checks are in the
+[validation guide](docs/maintenance/VALIDATION.md). `run_sql` and `build_database`
+run against the real `northwind.sqlite` **read-only**.
 
 The multi-turn eval's *instrument* is tested too
 ([`tests/test_multiturn_eval.py`](tests/test_multiturn_eval.py)): every reference
