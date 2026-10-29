@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>northwind-copilot · Architecture Datasheet</title>
+<meta name="description" content="Function-by-function walkthrough of the local-first LangGraph SQL analyst and the multi-tenant SaaS layer built on top of it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f4f3ee; --paper-2:#ecebe3; --card:#fbfaf6; --ink:#17202e; --ink-2:#31404f;
+  --muted:#66707d; --line:#d9d6cb; --line-2:#c7c3b6;
+  --oxblood:#a6371f; --oxblood-soft:#f2e1da; --cyan:#1f6a78; --cyan-soft:#dbeaec;
+  --amber:#a86a1e; --amber-soft:#f4e8d3; --shadow:0 1px 0 rgba(23,32,46,.04),0 8px 24px -18px rgba(23,32,46,.5);
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  --serif:"IBM Plex Serif","Iowan Old Style",Palatino,Georgia,serif;
+}
+:root[data-theme="dark"]{
+  --paper:#0f151e; --paper-2:#131b26; --card:#18212e; --ink:#dde3ec; --ink-2:#aeb8c6;
+  --muted:#8794a4; --line:#26303e; --line-2:#33404f;
+  --oxblood:#e07a5f; --oxblood-soft:#2a1a15; --cyan:#5bb7c6; --cyan-soft:#122229;
+  --amber:#d29a4f; --amber-soft:#241c10; --card:#161f2b;
+  --shadow:0 1px 0 rgba(0,0,0,.2),0 10px 30px -20px rgba(0,0,0,.8);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0f151e; --paper-2:#131b26; --card:#161f2b; --ink:#dde3ec; --ink-2:#aeb8c6;
+    --muted:#8794a4; --line:#26303e; --line-2:#33404f;
+    --oxblood:#e07a5f; --oxblood-soft:#2a1a15; --cyan:#5bb7c6; --cyan-soft:#122229;
+    --amber:#d29a4f; --amber-soft:#241c10;
+    --shadow:0 1px 0 rgba(0,0,0,.2),0 10px 30px -20px rgba(0,0,0,.8);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+/* ---- top bar ---- */
+.topbar{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--paper) 88%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.topbar .row{display:flex;align-items:center;gap:16px;height:56px}
+.brand{font-family:var(--mono);font-weight:600;font-size:14px;letter-spacing:.02em;display:flex;align-items:center;gap:10px}
+.brand .dot{width:9px;height:9px;border-radius:2px;background:var(--oxblood);box-shadow:14px 0 0 var(--cyan)}
+.brand .dot{margin-right:14px}
+.spacer{flex:1}
+.tnav{display:none;gap:20px;font-family:var(--mono);font-size:12.5px;letter-spacing:.03em;text-transform:uppercase}
+.tnav a{text-decoration:none;color:var(--muted)}
+.tnav a:hover{color:var(--ink)}
+.themebtn{font-family:var(--mono);font-size:12px;border:1px solid var(--line-2);background:var(--card);color:var(--ink);padding:6px 10px;border-radius:7px;cursor:pointer}
+.themebtn:hover{border-color:var(--ink-2)}
+@media(min-width:900px){.tnav{display:flex}}
+
+/* ---- layout ---- */
+.shell{display:grid;grid-template-columns:1fr;gap:0}
+@media(min-width:1000px){.shell{grid-template-columns:236px 1fr;gap:48px}}
+.toc{display:none}
+@media(min-width:1000px){
+  .toc{display:block;position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow-y:auto;padding:32px 0 60px;font-size:13.5px}
+}
+.toc h4{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:22px 0 8px;font-weight:600}
+.toc h4:first-child{margin-top:0}
+.toc a{display:block;text-decoration:none;color:var(--ink-2);padding:3px 0 3px 12px;border-left:2px solid var(--line);line-height:1.35}
+.toc a:hover{color:var(--ink);border-color:var(--ink-2)}
+.toc a.local{border-left-color:color-mix(in srgb,var(--cyan) 45%,var(--line))}
+.toc a.saas{border-left-color:color-mix(in srgb,var(--oxblood) 45%,var(--line))}
+.content{min-width:0;padding-bottom:96px}
+
+/* ---- hero ---- */
+.hero{padding:64px 0 40px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--oxblood);font-weight:600;margin:0 0 18px}
+.hero h1{font-family:var(--serif);font-weight:700;font-size:clamp(2.3rem,5.4vw,3.9rem);line-height:1.02;letter-spacing:-.015em;margin:0 0 22px}
+.hero h1 em{font-style:italic;color:var(--oxblood)}
+.lede{font-size:clamp(1.05rem,2.2vw,1.28rem);color:var(--ink-2);max-width:60ch;margin:0 0 30px;line-height:1.5}
+.stats{display:flex;flex-wrap:wrap;gap:14px 36px;border-top:1px solid var(--line);padding-top:24px;font-family:var(--mono)}
+.stat .n{font-size:1.6rem;font-weight:600;color:var(--ink);letter-spacing:-.02em}
+.stat .l{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+
+/* ---- dependency flow ---- */
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:30px 0;font-family:var(--mono);font-size:12.5px}
+.flow .node{border:1px solid var(--line-2);background:var(--card);padding:12px 14px;min-width:96px;position:relative}
+.flow .node .k{font-weight:600;color:var(--ink);font-size:13.5px}
+.flow .node .d{color:var(--muted);font-size:11px;margin-top:3px;text-transform:uppercase;letter-spacing:.05em}
+.flow .arrow{align-self:center;color:var(--oxblood);padding:0 10px;font-weight:600;font-size:16px}
+.flow .node:first-child{border-top-left-radius:9px;border-bottom-left-radius:9px}
+.flow .node:last-child{border-top-right-radius:9px;border-bottom-right-radius:9px;background:var(--cyan-soft);border-color:color-mix(in srgb,var(--cyan) 40%,var(--line-2))}
+.flow-cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.03em}
+
+/* ---- sections ---- */
+section{padding:56px 0;border-bottom:1px solid var(--line);scroll-margin-top:72px}
+.s-head{display:flex;align-items:baseline;gap:14px;margin:0 0 8px}
+.s-num{font-family:var(--mono);font-size:13px;color:var(--muted);font-weight:600}
+h2{font-family:var(--serif);font-size:clamp(1.7rem,3.4vw,2.4rem);font-weight:700;letter-spacing:-.01em;margin:0;line-height:1.1}
+h3{font-family:var(--serif);font-size:1.35rem;font-weight:600;margin:40px 0 6px;letter-spacing:-.005em;scroll-margin-top:72px}
+h4{font-family:var(--sans);font-size:1.02rem;font-weight:700;margin:26px 0 6px}
+p{margin:0 0 16px;max-width:74ch}
+.sub{color:var(--ink-2);max-width:74ch;margin:6px 0 26px;font-size:1.05rem}
+strong{font-weight:600}
+code{font-family:var(--mono);font-size:.86em;background:var(--paper-2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em;white-space:nowrap}
+:root[data-theme="dark"] code{background:var(--paper-2)}
+
+/* ---- layer tag ---- */
+.tag{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;padding:4px 9px;border-radius:20px;border:1px solid;vertical-align:middle}
+.tag.local{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,transparent);background:var(--cyan-soft)}
+.tag.saas{color:var(--oxblood);border-color:color-mix(in srgb,var(--oxblood) 40%,transparent);background:var(--oxblood-soft)}
+.tag .sq{width:7px;height:7px;border-radius:2px;background:currentColor}
+
+/* ---- function card ---- */
+.fn{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:20px 22px;margin:16px 0;box-shadow:var(--shadow)}
+.fn.local{border-left:3px solid var(--cyan)}
+.fn.saas{border-left:3px solid var(--oxblood)}
+.fn .sig{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--ink);margin:0 0 3px;word-break:break-word}
+.fn .path{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin:0 0 14px}
+.fn p{margin:0 0 10px;font-size:.97rem}
+.fn p:last-child{margin-bottom:0}
+.fn .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;color:var(--ink-2)}
+.fn .why{color:var(--ink-2)}
+
+/* ---- callouts ---- */
+.call{border-radius:10px;padding:14px 16px 14px 18px;margin:18px 0;border:1px solid;font-size:.96rem}
+.call p{margin:0}
+.call .h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:8px}
+.call.note{background:var(--cyan-soft);border-color:color-mix(in srgb,var(--cyan) 30%,var(--line))}
+.call.note .h{color:var(--cyan)}
+.call.warn{background:var(--amber-soft);border-color:color-mix(in srgb,var(--amber) 34%,var(--line))}
+.call.warn .h{color:var(--amber)}
+.call.seal{background:transparent;border:1.5px dashed color-mix(in srgb,var(--oxblood) 55%,var(--line));position:relative}
+.call.seal .h{color:var(--oxblood)}
+
+/* ---- pipeline rail ---- */
+.rail{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:20px 0 6px;font-family:var(--mono);font-size:12px}
+.rail .st{border:1px solid var(--line-2);background:var(--card);border-radius:20px;padding:6px 13px;display:flex;align-items:center;gap:8px}
+.rail .st b{color:var(--muted);font-weight:600;font-size:10.5px}
+.rail .st .nm{font-weight:500}
+.rail .sep{color:var(--oxblood);font-weight:600}
+
+/* ---- ordered steps ---- */
+.steps{list-style:none;counter-reset:s;padding:0;margin:22px 0}
+.steps>li{counter-increment:s;position:relative;padding:0 0 20px 52px;margin:0}
+.steps>li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:-2px;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--oxblood);border:1px solid color-mix(in srgb,var(--oxblood) 35%,var(--line));border-radius:8px;width:34px;height:30px;display:flex;align-items:center;justify-content:center;background:var(--card)}
+.steps>li::after{content:"";position:absolute;left:17px;top:30px;bottom:2px;width:1px;background:var(--line)}
+.steps>li:last-child::after{display:none}
+.steps .t{font-weight:600;font-family:var(--mono);font-size:13.5px}
+.steps .b{color:var(--ink-2);font-size:.96rem;margin-top:3px}
+.steps code{white-space:normal}
+
+/* ---- code block ---- */
+.code{background:var(--ink);color:#e7ecf3;border-radius:11px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.7px;line-height:1.65;margin:18px 0}
+:root[data-theme="dark"] .code{background:#0a0f16;border:1px solid var(--line)}
+.code .c{color:#8ba0b6}
+.code .k{color:#e8a06a}
+.code .s{color:#8fc8a0}
+.code b{color:#fff;font-weight:600}
+
+/* ---- two-col cards ---- */
+.grid2{display:grid;grid-template-columns:1fr;gap:14px;margin:18px 0}
+@media(min-width:760px){.grid2{grid-template-columns:1fr 1fr}}
+.mini{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:16px 18px}
+.mini h5{margin:0 0 6px;font-family:var(--mono);font-size:12.5px;font-weight:600;letter-spacing:.02em}
+.mini p{margin:0;font-size:.92rem;color:var(--ink-2)}
+
+/* ---- table ---- */
+.tbl-wrap{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:11px}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--paper-2)}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+
+/* ---- problems list ---- */
+.prob{border-left:3px solid var(--amber);background:var(--amber-soft);border-radius:0 8px 8px 0;padding:12px 16px;margin:12px 0}
+.prob .t{font-weight:600;font-size:.95rem}
+.prob .b{color:var(--ink-2);font-size:.92rem;margin-top:2px}
+
+footer{padding:48px 0 80px;color:var(--muted);font-family:var(--mono);font-size:12.5px;line-height:1.7}
+footer a{color:var(--cyan)}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+hr.soft{border:none;border-top:1px solid var(--line);margin:34px 0}
+.pillrow{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.pill{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line-2);border-radius:20px;padding:5px 11px;color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="wrap row">
+    <span class="brand"><span class="dot"></span>northwind-copilot / architecture</span>
+    <span class="spacer"></span>
+    <nav class="tnav">
+      <a href="#orientation">Orient</a>
+      <a href="#engine">Engine</a>
+      <a href="#saas">SaaS</a>
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#future">Future</a>
+    </nav>
+    <button type="button" class="themebtn" id="themebtn" aria-label="Toggle colour theme">◑ theme</button>
+  </div>
+</div>
+
+<div class="wrap shell">
+  <!-- TABLE OF CONTENTS -->
+  <aside class="toc">
+    <h4>Orientation</h4>
+    <a href="#orientation">Two layers, one repo</a>
+    <a href="#dependency">The dependency rule</a>
+    <a href="#hosted-flip">The HOSTED_MODE flip</a>
+
+    <h4>Module A — Local Engine</h4>
+    <a class="local" href="#engine">What it is · how it boots</a>
+    <a class="local" href="#engine-tools">The tools &amp; why</a>
+    <a class="local" href="#engine-core">core/ — config &amp; prompts</a>
+    <a class="local" href="#engine-infra">infra/ — db, llm, rag</a>
+    <a class="local" href="#engine-query">query/ — graph &amp; middleware</a>
+    <a class="local" href="#engine-response">response/ — stream &amp; chart</a>
+    <a class="local" href="#engine-problems">Problems &amp; gotchas</a>
+
+    <h4>Module B — SaaS Foundation</h4>
+    <a class="saas" href="#saas">What it is · how it boots</a>
+    <a class="saas" href="#saas-web">web/ — the FastAPI app</a>
+    <a class="saas" href="#saas-tenancy">tenancy/ &amp; auth/</a>
+    <a class="saas" href="#saas-datasets">datasets/</a>
+    <a class="saas" href="#saas-convo">conversations/</a>
+    <a class="saas" href="#saas-metering">metering/ &amp; billing/</a>
+    <a class="saas" href="#saas-keys">keys/ &amp; observability</a>
+    <a class="saas" href="#saas-problems">Problems &amp; gotchas</a>
+
+    <h4>Whole system</h4>
+    <a href="#lifecycle">Request lifecycle</a>
+    <a href="#future">What's next</a>
+    <a href="#appendix">Appendix: commands</a>
+  </aside>
+
+  <main class="content">
+
+  <!-- ===================== HERO ===================== -->
+  <header class="hero">
+    <p class="eyebrow">Architecture datasheet · read-only by design</p>
+    <h1>One repository,<br><em>two layers</em> that never touch the wrong way.</h1>
+    <p class="lede">A local-first LangGraph agent that writes SQL, runs it <strong>read-only</strong>, and answers with real numbers — wrapped in a multi-tenant SaaS that adds identity, per-tenant data, metering, and billing <strong>additively</strong>, without editing a line of the agent it hosts.</p>
+    <div class="flow" role="img" aria-label="Dependency direction: web depends on response depends on query depends on infra depends on core">
+      <div class="node"><div class="k">web</div><div class="d">FastAPI · SSE</div></div>
+      <span class="arrow">→</span>
+      <div class="node"><div class="k">response</div><div class="d">stream · chart</div></div>
+      <span class="arrow">→</span>
+      <div class="node"><div class="k">query</div><div class="d">graph · agent</div></div>
+      <span class="arrow">→</span>
+      <div class="node"><div class="k">infra</div><div class="d">db · llm · rag</div></div>
+      <span class="arrow">→</span>
+      <div class="node"><div class="k">core</div><div class="d">config · prompts</div></div>
+    </div>
+    <p class="flow-cap">Dependencies point inward. <code>core</code> knows nothing about the web; the web knows everything below it. The SaaS layer bolts onto the left edge — it may call in, but nothing inward imports it.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">2</div><div class="l">deployable entry points</div></div>
+      <div class="stat"><div class="n">206</div><div class="l">offline tests, 24 files</div></div>
+      <div class="stat"><div class="n">7</div><div class="l">alembic migrations</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">env flag flips the product</div></div>
+    </div>
+  </header>
+
+  <!-- ===================== ORIENTATION ===================== -->
+  <section id="orientation">
+    <div class="s-head"><span class="s-num">00</span><h2>Two layers, one repo</h2></div>
+    <p class="sub">The code splits cleanly in two. Read this section once and the rest of the document has a place to live.</p>
+
+    <div class="grid2">
+      <div class="mini">
+        <h5><span class="tag local"><span class="sq"></span>Local Engine</span></h5>
+        <p style="margin-top:10px">The original proof-of-concept: a LangGraph SQL analyst over the Northwind retail database. Runs on your laptop against a local Ollama model, or inside the LangGraph dev server. No auth, no tenants, one database. Still first-class — the eval harness proves its quality and must stay comparable.</p>
+      </div>
+      <div class="mini">
+        <h5><span class="tag saas"><span class="sq"></span>SaaS Foundation</span></h5>
+        <p style="margin-top:10px">Additive packages that turn the engine into a hosted product: users sign up, upload CSV/XLSX/SQLite, and chat with <em>their</em> data. Identity, per-tenant SQLite files, token metering, credit billing, BYOK keys — all built and tested, nothing deployed yet.</p>
+      </div>
+    </div>
+
+    <h3 id="dependency">The dependency rule that keeps them apart</h3>
+    <p>Every layer imports only the layers <em>below</em> it: <code>web → response → query → infra → core</code>. That single rule is why the SaaS work never destabilised the agent. Three consequences worth internalising:</p>
+    <ul>
+      <li><strong>The POC signatures were extended, never rewritten.</strong> <code>build_system_prompt</code>, <code>build_database</code>, <code>build_agent_for</code>, and <code>run_sql</code> each grew <em>defaulted</em> parameters that reproduce the exact legacy behaviour. Call them with no new arguments and you get the Northwind POC, byte-for-byte.</li>
+      <li><strong>Metering has no database access.</strong> <code>response/streaming.py</code> can <em>accumulate</em> tokens into an optional meter, but it cannot write a ledger row — the DB lives one layer out, in <code>web</code>. Billing settles in the web layer's <code>finally</code> block. Dependencies point inward, so money never leaks into the engine.</li>
+      <li><strong>The eval harness and the static graph are frozen.</strong> <code>query/graph.py</code>, <code>core/definitions.py</code>, <code>SYSTEM_PROMPT</code>, and everything under <code>eval/</code> are off-limits to SaaS work, so benchmark scores stay comparable across every change.</li>
+    </ul>
+
+    <h3 id="hosted-flip">The <code>HOSTED_MODE</code> flip</h3>
+    <p>One boolean environment variable decides which product you are running. It is read once, at import time, into the frozen <code>settings</code> singleton.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Concern</th><th>HOSTED_MODE=false (POC)</th><th>HOSTED_MODE=true (SaaS)</th></tr></thead>
+      <tbody>
+        <tr><td>Access control</td><td>Optional shared bearer token, or fully open</td><td>Per-user JWT session cookie → org context</td></tr>
+        <tr><td>Data source</td><td>One shared Northwind SQLite</td><td>Per-tenant uploaded SQLite files</td></tr>
+        <tr><td>Conversation history</td><td>Client sends it in the request</td><td>Server owns it, rebuilt from stored turns</td></tr>
+        <tr><td>Inference engine</td><td>Local Ollama offered first</td><td>Local hidden; cloud (metered or BYOK) only</td></tr>
+        <tr><td>Cost</td><td>Free — your own machine</td><td>Metered in credits, gated on allowance</td></tr>
+      </tbody>
+    </table></div>
+    <div class="call note"><p class="h">◆ The contract</p><p>With the flag <em>off</em>, the hosted routers are still mounted but never reached, and the app DB file is never created. The POC path is a supported product, not dead code. "Do not break it" is a rule, not a nicety.</p></div>
+  </section>
+
+  <!-- ===================== MODULE A: LOCAL ENGINE ===================== -->
+  <section id="engine">
+    <div class="s-head"><span class="s-num">A</span><h2>The Local Engine <span class="tag local"><span class="sq"></span>Module A</span></h2></div>
+    <p class="sub">The agent core. Everything here runs with no network beyond a local Ollama daemon, and boots either as a plain Python object or inside the LangGraph dev server. This is what the SaaS layer wraps — and what the eval harness grades.</p>
+
+    <h3>Two ways it starts</h3>
+    <p>The engine has one composition root, <code>build_agent()</code>, reached through two front doors:</p>
+    <ol class="steps">
+      <li><span class="t">langgraph dev</span><div class="b">Reads <code>langgraph.json</code>, which points at <code>./northwind_copilot/query/graph.py:graph</code>. Importing that module executes <code>graph = build_agent()</code> at module scope, so the dev server gets a fully compiled graph object to serve over its own API and Studio UI. This is the path that can later be deployed to LangGraph Platform.</div></li>
+      <li><span class="t">In-process, via the web app</span><div class="b">The FastAPI service ignores the static graph and instead builds a fresh agent <em>per request</em> through <code>build_agent_for(config)</code>, because the web user picks their engine and dataset each turn. Same tools, same middleware, assembled dynamically.</div></li>
+    </ol>
+    <div class="call warn"><p class="h">▲ Reserved name</p><p>LangGraph reserves <code>DATABASE_URI</code> and overwrites it with <code>:memory:</code> under <code>langgraph dev</code>. The analyst DB is therefore read from <code>NORTHWIND_DATABASE_URI</code>, never <code>DATABASE_URI</code>. Forget this and the dev server silently queries an empty in-memory database.</p></div>
+
+    <h3>What <code>build_agent()</code> assembles, in order</h3>
+    <div class="code"><span class="c"># query/graph.py — the module-level composition root</span>
+<span class="k">def</span> <b>build_agent</b>() -> CompiledStateGraph:
+    primary  = build_primary_model()        <span class="c"># Ollama, local-first</span>
+    fallback = build_fallback_model()        <span class="c"># OpenAI, or None if no key</span>
+    db       = build_database()              <span class="c"># Northwind SQLite, READ-ONLY</span>
+    sql_tools = SQLDatabaseToolkit(db=db, llm=primary).get_tools()
+    <span class="k">return</span> create_agent(
+        model=primary,
+        tools=sql_tools + [search_docs],     <span class="c"># SQL + knowledge retrieval</span>
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=None,                   <span class="c"># stateless; history is re-sent</span>
+        middleware=[EscalateToFallbackMiddleware(*fallbacks), trim_context],
+    )
+
+graph = build_agent()   <span class="c"># langgraph.json target</span></div>
+    <p>Five decisions are baked into those eleven lines, and each is deliberate. The next subsection is the "why".</p>
+
+    <h3 id="engine-tools">The tools, and why they were chosen</h3>
+    <p>The agent is given <strong>five tools</strong>: four from LangChain's <code>SQLDatabaseToolkit</code> — <code>sql_db_list_tables</code>, <code>sql_db_schema</code>, <code>sql_db_query</code>, <code>sql_db_query_checker</code> — plus one custom tool, <code>search_docs</code>.</p>
+
+    <div class="call seal"><p class="h">⊘ Read-only is the security boundary</p><p>The single most important design decision in the engine: the database connection is opened <strong>read-only at the connection level</strong> (<code>sqlite3.connect("file:…?mode=ro")</code>), not by inspecting whether a query string starts with <code>SELECT</code>. A confused — or prompt-injected — model physically cannot <code>DROP</code>, <code>DELETE</code>, or <code>UPDATE</code>, no matter what SQL it writes. The guarantee holds at the sqlite layer, below anything the LLM can influence.</p></div>
+
+    <div class="grid2">
+      <div class="mini"><h5>Why the standard toolkit</h5><p>Rather than hand-roll a query tool, the engine uses LangChain's toolkit so it inherits the battle-tested list-tables / describe-schema / execute loop. The read-only guarantee is imposed underneath it via the connection, so the stock tools stay safe.</p></div>
+      <div class="mini"><h5>Why <code>search_docs</code> exists</h5><p>Business truth lives outside the schema: what "revenue" means, when the Summer campaign ran, the return policy. A FAISS vector search over <code>docs/*.md</code> injects those definitions so the model doesn't invent a margin formula. POC-only — uploaded datasets carry their own context instead.</p></div>
+      <div class="mini"><h5>Why the checker is dropped locally</h5><p>On the web's <em>local</em> path, <code>build_agent_for</code> strips <code>sql_db_query_checker</code>. It is a whole extra model round-trip to lint SQL the model just wrote — negligible value on a small local model, and the step that stalls when a slow run is cancelled mid-stream. The static graph keeps it; the lean local path does not.</p></div>
+      <div class="mini"><h5>Why schema is <em>injected</em>, not discovered</h5><p>In hosted mode the schema summary is introspected once and pasted into the prompt, so the model can skip the <code>list_tables</code>/<code>schema</code> round-trips entirely. A deliberate latency win; the tools remain as an escape hatch. Capped at 40 tables — retrieval is the fix at warehouse scale.</p></div>
+    </div>
+
+    <!-- ---- core ---- -->
+    <h3 id="engine-core">core/ — configuration &amp; prompts (no I/O)</h3>
+    <p>The innermost layer. Pure data and strings; imports nothing from the rest of the app. If it reads a file or opens a socket, it does not belong here.</p>
+
+    <div class="fn local">
+      <p class="sig">settings = Settings()</p>
+      <p class="path">core/config.py</p>
+      <p>A frozen dataclass built from environment variables (loaded from <code>.env</code> once, at import). Every tunable — model names, paths, token budgets, deadlines, all the SaaS knobs — resolves here so nothing downstream hard-codes a value. Helpers <code>_env</code> / <code>_env_int</code> / <code>_env_bool</code> strip stray surrounding quotes, because some loaders (including <code>langgraph dev</code> reading <code>.env</code>) pass values with the quotes attached.</p>
+      <p class="why"><span class="lbl">Note</span> &nbsp;It carries two token budgets — <code>max_context_tokens</code> (8k, local) and <code>max_context_tokens_cloud</code> (32k) — and two turn deadlines, because a small local model should be cut promptly while a cloud multi-query analysis legitimately runs longer.</p>
+    </div>
+
+    <div class="fn local">
+      <p class="sig">SYSTEM_PROMPT · build_system_prompt(...) · LEAN_LOCAL_PROMPT · GENERIC_ANALYST_PROMPT</p>
+      <p class="path">core/prompts.py — the single home for every prompt string</p>
+      <p><strong>SYSTEM_PROMPT</strong> is the static, 9-rule Northwind analyst prompt used by the benchmark graph. Its revenue/margin formulas are interpolated from <code>core/definitions.py</code> so the prose and the graded rules can never drift apart. It is byte-stable — the eval depends on it.</p>
+      <p><strong>build_system_prompt(...)</strong> is the dynamic, request-scoped assembler used by the web service. It layers sections — data-integrity, scope, presentation, insights, ECharts — onto one of three bases depending on the request:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Path</th><th>Base prompt</th><th>Extra sections</th></tr></thead>
+        <tbody>
+          <tr><td>Local engine</td><td><code>LEAN_LOCAL_PROMPT</code></td><td>presentation + insights only (latency-sensitive)</td></tr>
+          <tr><td>Cloud engine, Northwind</td><td><code>SYSTEM_PROMPT</code></td><td>+ data-integrity, scope, ECharts</td></tr>
+          <tr><td>Uploaded dataset</td><td><code>GENERIC_ANALYST_PROMPT</code> + schema + business context + golden examples</td><td>+ data-integrity, scope, presentation, insights, (ECharts if capable)</td></tr>
+        </tbody>
+      </table></div>
+      <p class="why"><span class="lbl">Backward-compat</span> &nbsp;When <code>dataset_summary is None</code> and the flags say Northwind-cloud, it reproduces the exact POC prompt. That is the defaulted-parameter contract in action. Rule 7 of the generic prompt is the "answer in the user's language" wedge (the Arabic feature); the POC prompt is untouched by it.</p>
+    </div>
+
+    <!-- ---- infra ---- -->
+    <h3 id="engine-infra">infra/ — database, models, retrieval</h3>
+    <p>The layer that actually touches the outside world: SQLite, Ollama, OpenAI, FAISS. Everything above it is I/O-free.</p>
+
+    <div class="fn local">
+      <p class="sig">build_database(database_uri=None) -> SQLDatabase</p>
+      <p class="path">infra/database.py</p>
+      <p>Connects to a database <strong>read-only</strong> and wraps it as a LangChain <code>SQLDatabase</code>. For a file-backed SQLite database (the default and every uploaded dataset), it hands SQLAlchemy a custom <code>creator</code> that opens the file with <code>mode=ro</code> — writes raise <code>OperationalError</code> instead of touching bytes. <code>sample_rows_in_table_info=0</code> keeps the re-sent schema payload small.</p>
+      <p class="why"><span class="lbl">Extension seam</span> &nbsp;The <code>database_uri</code> parameter defaults to the configured Northwind DB (POC) but the hosted service passes a per-tenant dataset's SQLite URI. For a non-file backend (a future Postgres), read-only must come from the DB role's grants — the adapter connects normally and leaves that to deployment.</p>
+    </div>
+
+    <div class="fn local">
+      <p class="sig">build_ollama_model(model) · build_primary_model() · build_fallback_model()</p>
+      <p class="path">infra/llm.py</p>
+      <p><code>build_ollama_model</code> constructs the local chat model with three measured, non-obvious options: <code>num_ctx</code> pinned above the trim budget (Ollama defaults to 4096 and silently truncates over-long prompts <em>from the head</em>, where the system prompt lives — a correctness fix, not just latency); <code>reasoning=False</code> (chain-of-thought cost 2.5× latency for identical benchmark accuracy); and <code>keep_alive</code> to keep weights resident between turns.</p>
+      <p><code>build_fallback_model</code> returns an OpenAI model <em>or <code>None</code></em>: <code>ChatOpenAI</code> raises at construction with no key, so a local-only user would otherwise be unable to even build the graph. The fallback is a safety net, not a requirement.</p>
+    </div>
+
+    <div class="fn local">
+      <p class="sig">search_docs(query) · _get_index() · load_or_build_index(...)</p>
+      <p class="path">infra/docs_tool.py · infra/rag.py</p>
+      <p>The knowledge tool. <code>_get_index</code> lazily builds a process-wide FAISS store on first call; <code>load_or_build_index</code> loads a persisted index from <code>.faiss_index</code> or rebuilds it (paragraph-chunking <code>docs/*.md</code>, embedding with OpenAI) when <code>REINDEX</code> is set or none exists. <code>search_docs</code> itself returns the top-4 chunks, tagged by source filename.</p>
+      <p class="why"><span class="lbl">Dependency</span> &nbsp;Retrieval needs <code>OpenAIEmbeddings</code>, so building the index requires an OpenAI key and outbound HTTPS. On a machine that can only reach loopback, a pre-built <code>.faiss_index</code> loads fine but a rebuild fails.</p>
+    </div>
+
+    <!-- ---- query ---- -->
+    <h3 id="engine-query">query/ — the graph and its middleware</h3>
+
+    <div class="fn local">
+      <p class="sig">EngineConfig · DatasetContext · build_model(config) · build_agent_for(config, ...)</p>
+      <p class="path">query/agent_factory.py</p>
+      <p><code>build_agent_for</code> is the web's dynamic twin of <code>build_agent</code>. Given a frozen <code>EngineConfig</code> (provider / model / key) and an optional <code>DatasetContext</code>, it: builds the model (Ollama, OpenAI, or OpenRouter via the OpenAI SDK with a base-URL swap); builds a read-only DB for the dataset or Northwind; drops the query-checker on local; assembles the right system prompt; picks the tool set (<code>search_docs</code> only on the Northwind path); and chooses the trim budget by engine. It inserts <code>EscalateToFallbackMiddleware</code> only for a local primary with a fallback available.</p>
+      <p class="why"><span class="lbl">Why two dataclasses</span> &nbsp;<code>EngineConfig</code> (inference) and <code>DatasetContext</code> (data source) are kept separate so a request's model and its data are independent choices — you can point any engine at any dataset.</p>
+    </div>
+
+    <div class="fn local">
+      <p class="sig">EscalateToFallbackMiddleware · is_degenerate(response) · make_trim_context(max_tokens)</p>
+      <p class="path">query/middleware.py</p>
+      <p><strong>The local-first / escalate-on-empty design.</strong> A small local model sometimes returns an <em>empty</em> completion on the hardest reasoning step; the agent loop reads that as "done" and stops, so the failure is silent. LangChain's stock fallback middleware only retries on <em>exceptions</em>, so it slips through. <code>is_degenerate</code> catches the case — a final message with neither text nor tool calls — and the middleware escalates to the fallback chain, returning the first usable response.</p>
+      <p><code>make_trim_context</code> builds a <code>before_model</code> hook that trims history to a token budget (keeping the most recent messages). On local it is the load-bearing guard against a tight context window; on cloud the budget is large so a curated multi-turn history survives untouched.</p>
+      <p class="why"><span class="lbl">Async twin</span> &nbsp;It implements both <code>wrap_model_call</code> and <code>awrap_model_call</code> — the langgraph server invokes agents through <code>astream</code>, so without the async version the framework raises <code>NotImplementedError</code>.</p>
+    </div>
+
+    <!-- ---- response ---- -->
+    <h3 id="engine-response">response/ — turning the agent stream into UI events</h3>
+
+    <div class="fn local">
+      <p class="sig">async stream_chat(*, history, config, dataset, usage_meter, ...) -> AsyncIterator[dict]</p>
+      <p class="path">response/streaming.py — the engine's busiest function</p>
+      <p>Runs the agent for one turn and yields the structured events that drive the frontend's pipeline rail. As tool calls and messages arrive it emits <code>engine</code>, stage transitions, <code>sql</code>, <code>table</code>, <code>chart</code>, <code>insights</code>, <code>final</code>, and finally <code>done</code>. The pipeline it narrates:</p>
+      <div class="rail" role="img" aria-label="Pipeline stages">
+        <span class="st"><b>01</b><span class="nm">understand</span></span><span class="sep">›</span>
+        <span class="st"><b>02</b><span class="nm">sql</span></span><span class="sep">›</span>
+        <span class="st"><b>03</b><span class="nm">execute</span></span><span class="sep">›</span>
+        <span class="st"><b>04</b><span class="nm">results</span></span><span class="sep">›</span>
+        <span class="st"><b>05</b><span class="nm">chart</span></span><span class="sep">›</span>
+        <span class="st"><b>06</b><span class="nm">insights</span></span>
+      </div>
+      <p>It re-runs every captured query through <code>run_sql</code> to produce clean tables, suppresses charts when no SQL returned rows (fabricated-number guard), and derives a chart server-side for local models that don't draw their own. Three exits are handled explicitly: <code>CancelledError</code> (client disconnected — log one line and re-raise, never swallow), <code>TimeoutError</code> (salvage the queries that completed, then emit a friendly error), and any other exception (log with a correlation <code>error_id</code>, mirror it to Sentry, hand the client only the id — raw text can leak paths and URIs).</p>
+      <p class="why"><span class="lbl">Metering seam</span> &nbsp;The optional <code>usage_meter</code> is fed <em>as updates arrive</em>, not at the end, so a disconnect or timeout still bills for the tokens already spent. This function has no DB access — it only accumulates.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="mini"><h5>_iter_with_heartbeat(...)</h5><p>Wraps the agent's async stream and injects a <code>ping</code> every 10s of silence. A slow local model can spend tens of seconds before its first token, during which no SSE bytes flow and proxies drop the connection. The in-flight <code>__anext__</code> is held in a task and only <em>observed</em> with a timeout, so a heartbeat never cancels the real work.</p></div>
+      <div class="mini"><h5>_parse_final(content)</h5><p>Splits the model's final message into prose, insight bullets, and any fenced <code>echarts</code> blocks (a capable model may draw several). Strips Markdown tables the model drew — the UI already renders the real result set, so they'd show as raw pipes.</p></div>
+      <div class="mini"><h5>_Rail</h5><p>A tiny state machine that tracks which pipeline stages are done/active and emits only the transition events, so the frontend rail advances monotonically without the caller managing stage bookkeeping.</p></div>
+      <div class="mini"><h5>LangSmith tracing</h5><p>Built explicitly (an lru-cached client) rather than via env auto-tracing, so <code>INSECURE_TLS</code> can relax cert checks on trace uploads. A <code>session_id</code> in run metadata groups every turn of a conversation into one thread.</p></div>
+    </div>
+
+    <div class="fn local">
+      <p class="sig">run_sql(sql, db_path=None) · infer_chart(table)</p>
+      <p class="path">response/charting.py</p>
+      <p><code>run_sql</code> re-executes the agent's final <code>SELECT</code> directly against the SQLite file so the frontend gets structured columns/rows instead of the string blob the SQL tool returns. It opens read-only, refuses anything that isn't <code>SELECT</code>/<code>WITH</code>, installs a SQLite progress handler that aborts a query past the time budget (so a runaway cartesian join can't pin a core), and caps at 500 rows with a <code>truncated</code> flag. Any error returns <code>None</code> rather than raising.</p>
+      <p><code>infer_chart</code> derives a reasonable ECharts option from a result table: first non-numeric column as the category axis, numeric columns as series, a line for temporal categories and bars otherwise. This is how local (and chart-less cloud) turns still get a chart.</p>
+    </div>
+
+    <!-- ---- problems ---- -->
+    <h3 id="engine-problems">Problems &amp; sharp edges in the engine</h3>
+    <div class="prob"><div class="t">RAG rebuild needs the cloud</div><div class="b">Building the FAISS index requires OpenAI embeddings and outbound HTTPS. In a loopback-only sandbox a pre-built index loads, but <code>REINDEX=true</code> fails. The index is also loaded with <code>allow_dangerous_deserialization=True</code> — fine for a self-built file, a footgun if the <code>.faiss_index</code> ever came from an untrusted source.</div></div>
+    <div class="prob"><div class="t">Silent head-truncation if <code>num_ctx</code> is misconfigured</div><div class="b">If <code>OLLAMA_NUM_CTX</code> drops below the trim budget, Ollama truncates the prompt from the head and drops the system prompt (and, hosted, the schema summary) with no error. The trim middleware is only a real guard when the window it trims to actually exists.</div></div>
+    <div class="prob"><div class="t">The static graph and the web path can diverge</div><div class="b"><code>graph.py:graph</code> is local-first with the checker kept; the web builds a different agent (checker dropped, per-engine prompt). They share helpers but are assembled separately, so a change to one is not automatically reflected in the other. The eval only exercises the static graph.</div></div>
+    <div class="prob"><div class="t">Server-side chart inference is heuristic</div><div class="b"><code>infer_chart</code> guesses axes from column names/types. A table whose only category column is an id, or whose numbers are codes, can produce a misleading chart. It bails on &lt;2 rows and pure-id series, but it cannot know semantics.</div></div>
+  </section>
+
+  <!-- ===================== MODULE B: SAAS FOUNDATION ===================== -->
+  <section id="saas">
+    <div class="s-head"><span class="s-num">B</span><h2>The SaaS Foundation <span class="tag saas"><span class="sq"></span>Module B</span></h2></div>
+    <p class="sub">Additive packages that make the engine a hosted, multi-tenant product. They sit on the outer edge of the dependency graph: they call the engine, the engine never imports them. Every one of these was built and tested; none is deployed.</p>
+
+    <h3>How the server starts</h3>
+    <p>The hosted product is served by uvicorn, not the langgraph dev server. The container's command tells the whole story:</p>
+    <div class="code"><span class="c"># deploy/Dockerfile.backend</span>
+CMD ["sh","-c","<b>alembic upgrade head</b> && <b>uvicorn northwind_copilot.web.app:app</b> --host 0.0.0.0 --port 8000"]</div>
+    <ol class="steps">
+      <li><span class="t">alembic upgrade head</span><div class="b">Applies migrations 001→007 against Postgres, bringing the app (control-plane) schema up to date: identity + tenancy, datasets, conversations + turns, usage + credit ledger, api_keys, subscriptions + webhook_events, and turn feedback + golden examples.</div></li>
+      <li><span class="t">import web.app</span><div class="b"><code>init_sentry()</code> runs (a no-op unless <code>SENTRY_DSN</code> is set). CORS is configured from settings. All five hosted routers — auth, datasets, conversations, keys, billing — are mounted unconditionally; they simply aren't reachable with the flag off.</div></li>
+      <li><span class="t">lifespan startup</span><div class="b">In hosted mode over a <em>SQLite</em> app DB (dev/test only), <code>create_all()</code> builds the schema so no migration step is needed. Over Postgres (production) this is intentionally skipped — Alembic owns the schema there, and <code>create_all</code> would drift from the migration history.</div></li>
+      <li><span class="t">serve</span><div class="b">Requests hit <code>require_access</code>, which resolves the session cookie to a <code>RequestContext</code> in hosted mode, or falls back to the shared-token guard (returning <code>None</code>) in the POC.</div></li>
+    </ol>
+
+    <h3 id="saas-web">web/ — the FastAPI app &amp; its guards</h3>
+
+    <div class="fn saas">
+      <p class="sig">app = FastAPI(...) · lifespan · POST /api/chat · GET /api/usage · /api/models · /api/preferences</p>
+      <p class="path">web/app.py</p>
+      <p>The orchestrator. <code>/api/chat</code> is the heart of the product and gets its own lifecycle walkthrough <a href="#lifecycle">below</a>. In short, per turn it: resolves the API key (distinguishing BYOK from metered), runs the pre-flight credit check, builds the <code>EngineConfig</code>, resolves the org-scoped dataset, rebuilds server-owned history, streams via <code>stream_chat</code>, and — critically — settles usage and persists the turn in a <code>finally</code> block so a disconnect or timeout still bills and saves.</p>
+      <p><code>/api/usage</code> assembles the caller's plan, remaining credits, trial counters, BYOK providers, and subscription status to drive the usage meter. In the POC (no tenant) it returns <code>{"hosted": false}</code> so the frontend just hides the meter.</p>
+      <p class="why"><span class="lbl">Deferred imports</span> &nbsp;Every tenancy/metering import inside these handlers is done <em>lazily</em>, so the POC path never touches the application database nor creates its file.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">require_access(...) · require_auth(...) · rate_limit(request) · RateLimiter</p>
+      <p class="path">web/security.py</p>
+      <p>The mode-aware door. <code>require_access</code> branches on <code>hosted_mode</code>: hosted, it reads the httpOnly <code>nw_session</code> cookie, verifies the JWT, loads the user + org, and returns a <code>RequestContext</code>; POC, it enforces the optional shared bearer token (constant-time compared to defeat timing attacks) and returns <code>None</code>. <code>rate_limit</code> is a per-process in-memory sliding window.</p>
+      <p class="why"><span class="lbl">Deliberately minimal</span> &nbsp;Auth and rate limiting are dependency-free so a self-hoster can stand the service up on one box. Both are single-node assumptions — a multi-worker deployment needs a shared store (Redis) for the limiter.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="mini"><h5>_resolve_hosted_key(...)</h5><p>Decides BYOK vs metered: the org's stored (encrypted) key wins, then a request-body key — both are the customer's own account, so those turns are BYOK (recorded, never charged). Only when neither exists does the turn run on the server's key and get metered.</p></div>
+      <div class="mini"><h5>_resolve_api_key(...)</h5><p>Guards the operator's wallet: the server's env key is used only for <em>trusted</em> callers (hosted users or a token-gated deploy). An anonymous open POC never spends the operator's key for a visitor who didn't bring one.</p></div>
+      <div class="mini"><h5>models_registry.list_all_providers()</h5><p>Reads installed Ollama models live from the daemon (hidden in hosted mode — no local daemon there) and offers a curated cloud list. Hosted defaults to OpenRouter (the metered key); the POC leaves OpenAI first.</p></div>
+      <div class="mini"><h5>web/preferences.py</h5><p>Persists free-text analyst preferences to a single JSON file with an atomic temp-file-then-rename write. Simple and safe — but see the problems list: it is process-global, not per-tenant.</p></div>
+    </div>
+
+    <h3 id="saas-tenancy">tenancy/ &amp; auth/ — who is asking, and for which org</h3>
+
+    <div class="fn saas">
+      <p class="sig">get_engine() · get_sessionmaker() · get_session() · create_all()</p>
+      <p class="path">tenancy/db.py</p>
+      <p>A single process-wide <strong>async</strong> engine, created lazily from <code>APP_DATABASE_URL</code> — SQLite+aiosqlite in dev/tests, Postgres+asyncpg in production, chosen entirely by the URL so no code changes between them. <code>get_session</code> is the FastAPI dependency that yields a request-scoped session and manages the commit/rollback boundary so handlers don't each have to.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">Base · User · Org · OrgMember · Dataset · Conversation · Turn · UsageEvent · CreditLedger · Subscription · WebhookEvent · ApiKey · TurnFeedback · GoldenExample</p>
+      <p class="path">tenancy/models.py — the control-plane schema</p>
+      <p>Everything <em>about</em> the product, separate from the per-tenant SQLite files that hold each customer's <em>data</em>. Two design choices thread through it: <strong>the org is the tenant unit from day one</strong> — signup creates a personal org, so adding team seats later is a row change, not a migration — and <strong>string UUIDs + timezone-aware timestamps</strong> throughout, so the same models run on Postgres and SQLite unchanged. <code>Turn</code>'s JSON columns mirror the exact SSE artifact the frontend renders, which is what lets the server own conversation history.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">RequestContext · current_user(...) · load_context(session, user_id) · current_org(...)</p>
+      <p class="path">tenancy/deps.py</p>
+      <p><code>load_context</code> resolves a user to a frozen <code>RequestContext(user_id, org_id, plan, role)</code> — the object every downstream route authorises against. v1 assumes one personal org per user (the first membership); multi-org selection later reads an active-org claim here.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">hash_password · verify_password · mint_session_token · read_session_token · signup/login/logout/me</p>
+      <p class="path">auth/service.py · auth/router.py</p>
+      <p>Passwords are <strong>argon2id</strong> (memory-hard, current OWASP default). Sessions are stateless <strong>JWTs</strong> delivered as an <strong>httpOnly</strong> cookie, so the token is never readable by JavaScript — no localStorage XSS exposure. The cookie is <code>Secure</code> in hosted mode (always HTTPS behind Caddy), relaxed on <code>http://localhost</code> in dev.</p>
+      <p><code>signup</code> atomically provisions a <strong>User + personal Org + owner OrgMember + 14-day trial</strong> in one transaction, so every user has a tenant from the very first request. Response bodies never contain the token.</p>
+    </div>
+
+    <div class="call seal"><p class="h">⊘ Tenant isolation is the highest-stakes invariant</p><p>Every data route re-checks <code>dataset.org_id == ctx.org_id</code> and answers a uniform <code>404</code> when it fails — the same response whether the row is missing or owned by another tenant, so the API never even confirms another org's data <em>exists</em>. On disk, each org's files live under <code>{tenant_data_dir}/{org_id}/</code>, making isolation a filesystem fact as well as an application check. "Org A cannot read org B" is the test class that must never regress.</p></div>
+
+    <h3 id="saas-datasets">datasets/ — untrusted files become read-only SQLite</h3>
+
+    <div class="fn saas">
+      <p class="sig">ingest(source_type, data, dest) · ingest_csv / ingest_xlsx / ingest_sqlite · append(...) · dataset_stats(...)</p>
+      <p class="path">datasets/ingest.py</p>
+      <p>Uploaded bytes are untrusted, and the ingestion posture reflects that. CSV/XLSX are parsed with pandas and written to a <em>fresh</em> SQLite file, so nothing executable survives. An uploaded SQLite file is the dangerous case — it can carry triggers, views, or virtual tables — so it is never served directly: it's opened read-only, integrity-checked (<code>PRAGMA quick_check</code>), and only real <em>table data</em> is copied into a fresh file, shedding all executable objects. Column and table names are coerced to safe identifiers.</p>
+      <p><code>append</code> is what makes datasets <strong>relational across files</strong>: each added upload becomes more tables in the same per-tenant DB (de-conflicted with an <code>_N</code> suffix, never clobbered), so the agent can join <code>sales.csv</code> against <code>targets.xlsx</code>. <code>dataset_stats</code> re-counts from the file afterwards, so a partial multi-sheet append still leaves accurate stored counts.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="mini"><h5>schema_summary.py</h5><p><code>mechanical_summary</code> introspects tables, columns, types, row counts, and 3 sample values per column into the block that gets injected into the prompt. An optional <code>describe</code> callable can LLM-enrich it into prose — the hook exists but is currently unused (a future item).</p></div>
+      <div class="mini"><h5>storage.py</h5><p>Owns the <code>{tenant_data_dir}/{org_id}/{dataset_id}.sqlite</code> layout, per-org disk usage (a single glob-walk), and file deletion. Keeping each org in its own directory is what makes isolation a filesystem fact.</p></div>
+      <div class="mini"><h5>golden.py — select_examples(...)</h5><p>Picks up to 3 confirmed (question→SQL) pairs to inject for a dataset, ranked by plain keyword overlap with the incoming question, recency as tie-break. Deliberately no embeddings in v1 — the per-dataset corpus is tens of examples, and the goal is formula/style transfer, not retrieval precision.</p></div>
+      <div class="mini"><h5>router.py</h5><p>Upload, add-file, run-query, list, get, edit-context, delete — every route <code>_load_owned</code>-guarded to the caller's org. The user-edited SQL route runs through the <em>same</em> read-only + timeout + row-cap path as the agent (<code>run_sql</code>), so an edited query can do nothing the agent couldn't.</p></div>
+    </div>
+
+    <h3 id="saas-convo">conversations/ — the server owns history now</h3>
+
+    <div class="fn saas">
+      <p class="sig">TurnRecorder · ensure_conversation(...) · persist_turn(...) · build_history(turns, question)</p>
+      <p class="path">conversations/service.py · conversations/history.py</p>
+      <p>In the POC the client sends the whole conversation in each request. Once tokens cost money, that is a hole — a client could forge an assistant "memory" to smuggle content into the prompt. So in hosted mode the <strong>server owns history</strong>: only the new question comes from the request; all prior context is rebuilt from stored turns by <code>build_history</code> (last 5 turns, each replayed as the question plus a compact recap of the answer and its executed SQL + a few result rows).</p>
+      <p><code>TurnRecorder</code> observes the very same SSE events the client renders and accumulates them into a storable <code>Turn</code>; <code>persist_turn</code> writes it. Because the chat endpoint drives the recorder and calls <code>persist_turn</code> in a <code>finally</code>, a turn is saved even if the client disconnects mid-answer.</p>
+    </div>
+
+    <h3 id="saas-metering">metering/ &amp; billing/ — counting tokens, charging credits</h3>
+    <p>Three settlement modes are decided per turn. Understanding them is understanding the whole money model:</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Mode</th><th>When</th><th>What is written</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Metered</strong></td><td>Paid plan, running on <em>our</em> provider key</td><td>UsageEvent + a <code>credit_ledger</code> debit; cached balance decremented under a row lock</td></tr>
+        <tr><td><strong>BYOK</strong></td><td>Org's own stored key</td><td>UsageEvent with <code>byok=True, credits=0</code>; <strong>no</strong> ledger write — recorded for fair-use analytics only</td></tr>
+        <tr><td><strong>Trial</strong></td><td>No credit grant yet</td><td>UsageEvent with the real credit cost (for visibility); <strong>no</strong> ledger write — the trial is capped by days + query count, not balance</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="fn saas">
+      <p class="sig">UsageAccumulator.observe(message) · price_for(model) · credits_for(model, in, out)</p>
+      <p class="path">metering/usage.py · metering/pricing.py</p>
+      <p><code>UsageAccumulator</code> is the object handed to <code>stream_chat</code>. It folds each <code>AIMessage.usage_metadata</code> into running input/output totals, de-duplicating by message id because a graph update can replay already-seen state. LangChain normalises token counts across OpenAI-compatible backends and Ollama alike, so one accumulator covers every engine.</p>
+      <p><code>pricing.py</code> holds a static per-model rate card and converts tokens → USD → credits (1 credit ≈ $0.01). All money math is <code>Decimal</code>, quantised to 4dp to match the <code>Numeric(12,4)</code> columns — never float. An unknown (free-typed) model falls back to a deliberately high frontier price, so it can never be <em>under</em>-billed.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">check_and_reserve(...) · settle(...) · grant_credits(...) · trial_queries_used(...)</p>
+      <p class="path">metering/credits.py</p>
+      <p><code>check_and_reserve</code> is the <strong>pre-flight</strong>, run before any model call: BYOK bypasses every check; trial is gated on expiry + query count; paid requires a positive balance. It raises <code>402 Payment Required</code> when the allowance is exhausted, so an out-of-credit turn is rejected before it spends anything.</p>
+      <p><code>settle</code> is the <strong>post-flight</strong>, called from the chat endpoint's <code>finally</code>. It always writes a UsageEvent, and for metered turns adds a ledger debit and updates <code>orgs.credit_balance</code> under <code>SELECT … FOR UPDATE</code> — a real row lock on Postgres serialising concurrent turns, a no-op on the SQLite dev backend. The ledger is the auditable source of truth; the balance column is just a cache so entitlement checks are a single-row read.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">Entitlements · PLANS (trial/starter/pro/team) · get_entitlements(plan) · require_entitlement(feature) · ensure_upload_allowed(...)</p>
+      <p class="path">billing/entitlements.py — the tier sheet as code</p>
+      <p>Plans are frozen dataclasses in code, not an enum migration, so a tier change is a code edit. Each defines credits/month, dataset count, upload cap, BYOK availability, seats, and trial caps. <code>require_entitlement("byok")</code> builds a FastAPI dependency that 403s when a plan lacks a feature; <code>ensure_upload_allowed</code> enforces dataset-count (403) and file-size (413) quotas.</p>
+    </div>
+
+    <div class="fn saas">
+      <p class="sig">BillingProvider (Protocol) · NormalizedEvent · get_provider() · MockBillingProvider · apply_event(session, event)</p>
+      <p class="path">billing/provider.py · billing/mock.py · billing/service.py</p>
+      <p>Everything the app knows about payments goes through the <code>BillingProvider</code> protocol: build a checkout URL, build a portal URL, and turn a webhook into a <code>NormalizedEvent</code>. The lifecycle code only ever sees normalized events, so <strong>adding a real processor (Paddle) is one new module + one branch in <code>get_provider()</code></strong> — no changes to routes, service, or frontend.</p>
+      <p><code>MockBillingProvider</code> walks the exact real path with no money: checkout returns a URL, opening it "completes payment", and completion is delivered as a JWT-<em>signed</em> webhook through the same parse → verify → idempotent-apply pipeline. The signature stands in for a provider's webhook signature; the token's <code>jti</code> stands in for its event id (replays are idempotent); the expiry bounds link validity.</p>
+      <p><code>apply_event</code> is the provider-agnostic lifecycle: <code>activated</code> sets the plan + grants monthly credits + upserts an active subscription; <code>renewed</code> expires the old balance (credits don't roll over) and grants a fresh month; <code>payment_failed</code> marks <code>past_due</code> (grace period); <code>cancelled</code> demotes to an expired trial — data stays readable, chat answers 402. Every application records the provider event id in <code>webhook_events</code> first, so retried deliveries are no-ops.</p>
+    </div>
+
+    <h3 id="saas-keys">keys/ &amp; observability</h3>
+    <div class="fn saas">
+      <p class="sig">store_key(...) · resolve_org_key(...) · delete_key(...) · list_keys(...)</p>
+      <p class="path">keys/service.py</p>
+      <p>BYOK provider keys are <strong>Fernet-encrypted</strong> with <code>KEY_ENCRYPTION_SECRET</code> before they touch the database, and the plaintext is only ever reconstructed server-side at the moment a chat turn needs it (<code>resolve_org_key</code>). The API is <strong>write-only by contract</strong> — it returns only <code>{provider, last4, set_at}</code>, never the key. A row that fails to decrypt (e.g. after a key rotation) resolves to <code>None</code> and the turn quietly falls through to the metered path rather than erroring.</p>
+    </div>
+    <div class="fn saas">
+      <p class="sig">init_sentry() · report_error(exc, error_id) · _scrub_value(...)</p>
+      <p class="path">core/observability.py</p>
+      <p>Opt-in error tracking (only when <code>SENTRY_DSN</code> is set) and safe to run without the SDK installed. Every outgoing event passes through a scrubber that redacts provider-key and bearer-token shapes, so a stray key in an exception message can never reach a third party. The <code>error_id</code> a user sees in a failed chat becomes the Sentry tag to search by.</p>
+    </div>
+
+    <h3 id="saas-problems">Problems &amp; sharp edges in the SaaS layer</h3>
+    <div class="prob"><div class="t">Analyst preferences are process-global, not per-tenant</div><div class="b"><code>web/preferences.py</code> stores one JSON file for the whole process and <code>/api/chat</code> loads it for every request regardless of tenant. In hosted mode that means one org's saved preferences would apply to <em>all</em> orgs. Fine for the single-user POC; a real leak in multi-tenant mode. Preferences need to move onto the org (or user) row.</div></div>
+    <div class="prob"><div class="t">Rate limiting is per-IP and per-process</div><div class="b">The limiter keys on client IP in an in-memory window. Behind a shared NAT many users collide; across multiple workers the limit multiplies. Hosted mode wants a per-<code>user_id</code> key in a shared store (Redis) — noted as open product work.</div></div>
+    <div class="prob"><div class="t">Ingestion is synchronous, bounded at 25MB</div><div class="b">Uploads are parsed in-request with a hard 25MB ceiling, independent of the Pro/Team 200–500MB plan caps, because a large file read into memory would stall the single worker. Background ingestion is the unlock for the bigger tiers.</div></div>
+    <div class="prob"><div class="t">The credit row-lock is a no-op in dev</div><div class="b"><code>SELECT … FOR UPDATE</code> only truly serialises on Postgres. On the SQLite dev/test backend it does nothing, so concurrency behaviour can't be validated locally — it must be checked against the Docker/Postgres stack.</div></div>
+    <div class="prob"><div class="t">Graders only prove Northwind competence</div><div class="b">The eval harness exercises the static Northwind graph, not the dynamic uploaded-dataset path. Until a second eval dataset runs through <code>build_system_prompt</code>'s dataset branch, "it works on someone else's data" is asserted, not measured. This is called out as the #1 product risk.</div></div>
+  </section>
+
+  <!-- ===================== LIFECYCLE ===================== -->
+  <section id="lifecycle">
+    <div class="s-head"><span class="s-num">C</span><h2>One hosted turn, end to end</h2></div>
+    <p class="sub">The two layers meeting in <code>POST /api/chat</code>. Follow a single question from cookie to settled credit — this is where every earlier decision pays off.</p>
+    <ol class="steps">
+      <li><span class="t">Guard &amp; identify <span class="tag saas"><span class="sq"></span>SaaS</span></span><div class="b"><code>require_access</code> reads the <code>nw_session</code> cookie, verifies the JWT, loads the user + org, and returns a <code>RequestContext</code>. <code>rate_limit</code> checks the window. (POC: token check, <code>ctx = None</code>.)</div></li>
+      <li><span class="t">Resolve the key &amp; pre-flight the wallet <span class="tag saas"><span class="sq"></span>SaaS</span></span><div class="b"><code>_resolve_hosted_key</code> decides BYOK vs metered; <code>check_and_reserve</code> raises <code>402</code> if the trial/credit allowance is spent. No model has been called yet — an out-of-allowance turn costs nothing.</div></li>
+      <li><span class="t">Scope the dataset &amp; rebuild history <span class="tag saas"><span class="sq"></span>SaaS</span></span><div class="b"><code>_resolve_dataset</code> loads the org-owned SQLite (404 if not theirs, 409 if still ingesting) plus its golden examples; <code>_prepare_conversation</code> creates/finds the conversation and rebuilds server-owned history from stored turns. Only the new question comes from the client.</div></li>
+      <li><span class="t">Assemble the agent <span class="tag local"><span class="sq"></span>Engine</span></span><div class="b"><code>build_agent_for(config, dataset=…)</code> picks the model, opens the dataset read-only, drops the checker on local, assembles the dataset-aware prompt, and wires the trim (+ escalation) middleware.</div></li>
+      <li><span class="t">Stream the pipeline <span class="tag local"><span class="sq"></span>Engine</span></span><div class="b"><code>stream_chat</code> runs the agent, narrating <code>understand → sql → execute → results → chart → insights</code> as SSE events, re-running each query through read-only <code>run_sql</code>, feeding the <code>UsageAccumulator</code> as tokens arrive, and heart-beating through silences.</div></li>
+      <li><span class="t">Record as it flows <span class="tag saas"><span class="sq"></span>SaaS</span></span><div class="b">A <code>TurnRecorder</code> observes the same events the browser does, accumulating the storable turn in parallel with rendering.</div></li>
+      <li><span class="t">Settle &amp; persist — exactly once <span class="tag saas"><span class="sq"></span>SaaS</span></span><div class="b">On <code>done</code> (and again in <code>finally</code>, guarded by a <code>finalized</code> flag) <code>_finalize_turn</code> writes the turn, settles usage (ledger debit for metered turns), and injects <code>turn</code> + <code>usage</code> SSE events before <code>done</code>. Because it's in <code>finally</code>, a disconnect or timeout still bills and saves.</div></li>
+    </ol>
+    <div class="call note"><p class="h">◆ Why the layering holds</p><p>Steps 4–5 are pure Engine and know nothing about orgs or credits. Steps 1–3 and 6–7 are pure SaaS and never reach into the agent's internals — they pass a config in and read an event stream out. The seam between the two layers is exactly the <code>stream_chat</code> signature, and that is the whole point.</p></div>
+  </section>
+
+  <!-- ===================== FUTURE ===================== -->
+  <section id="future">
+    <div class="s-head"><span class="s-num">D</span><h2>What's next</h2></div>
+    <p class="sub">The owner's July 2026 decision: use and test the app as a product now; defer everything that needs a third party. Two tracks.</p>
+
+    <h3>Product work — no third party needed</h3>
+    <div class="grid2">
+      <div class="mini"><h5>Second eval dataset <span class="tag saas"><span class="sq"></span>#1 risk</span></h5><p>Run a non-Northwind dataset through the dynamic-prompt path and grade it. Until then, quality on customer data is unproven. Then design-partner evals.</p></div>
+      <div class="mini"><h5>LLM schema enrichment</h5><p>The <code>describe</code> hook in <code>schema_summary.py</code> exists but is unused. One cheap call per upload would turn the mechanical table dump into a readable overview.</p></div>
+      <div class="mini"><h5>Per-user rate limiting</h5><p>Key the limiter on <code>user_id</code> in hosted mode and move it to a shared store, replacing the per-IP per-process window.</p></div>
+      <div class="mini"><h5>Background ingestion &gt; 25MB</h5><p>A task queue unlocks the Pro/Team upload caps currently bounded at 25MB by synchronous in-request parsing.</p></div>
+      <div class="mini"><h5>Fix per-tenant preferences</h5><p>Move analyst preferences off the process-global JSON file onto the org/user row before hosted launch (see problems).</p></div>
+      <div class="mini"><h5>Self-host Monaco</h5><p>The SQL editor loads Monaco from jsDelivr at runtime; self-hosting removes the CDN dependency and the CSP carve-out.</p></div>
+    </div>
+
+    <h3>The third-party plug-ins, in order</h3>
+    <ol class="steps">
+      <li><span class="t">Hosting</span><div class="b">Buy a domain, provision a Hetzner VPS, point DNS, copy <code>deploy/</code> + <code>.env</code>, <code>docker compose up</code>. Then a CI deploy job (images already push to GHCR).</div></li>
+      <li><span class="t">Ops accounts</span><div class="b">Sentry projects (set the DSNs, rebuild frontend), UptimeRobot on <code>/api/health</code>, a Storage Box + backup/restore drill, a staging compose project — all scripted in <code>deploy/OPS.md</code>.</div></li>
+      <li><span class="t">Payments</span><div class="b">Start Paddle seller verification first (Egyptian sellers ≈ weeks). Then write <code>billing/paddle.py</code> implementing the <code>BillingProvider</code> protocol and add a branch in <code>get_provider()</code>. Lifecycle, ledger, and frontend don't change — validate against the same drills as the mock.</div></li>
+      <li><span class="t">Google OAuth</span><div class="b">Create the OAuth client and wire the two endpoints; the <code>oauth_accounts</code> table and config fields already exist.</div></li>
+      <li><span class="t">Pre-launch</span><div class="b">Decide LangSmith vs Langfuse EU, a 60-day data-retention cron + ToS, a public <code>/pricing</code> page, and org invites/seats.</div></li>
+    </ol>
+  </section>
+
+  <!-- ===================== APPENDIX ===================== -->
+  <section id="appendix">
+    <div class="s-head"><span class="s-num">E</span><h2>Appendix — running it</h2></div>
+    <div class="code"><span class="c"># Tests (offline — no LLM/network). PYTHONIOENCODING is mandatory on Windows.</span>
+PYTHONIOENCODING=utf-8 uv run pytest            <span class="c"># 206 tests, 24 files</span>
+
+<span class="c"># Lint gate</span>
+uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
+
+<span class="c"># Module A — the POC agent in the LangGraph dev server</span>
+uv run langgraph dev
+
+<span class="c"># Module B — the hosted stack (Postgres + TLS, closest to prod)</span>
+cd deploy && docker compose up --build          <span class="c"># https://localhost</span>
+
+<span class="c"># Migrations</span>
+uv run alembic upgrade head</div>
+    <div class="pillrow">
+      <span class="pill">HOSTED_MODE — flips POC ↔ SaaS</span>
+      <span class="pill">NORTHWIND_DATABASE_URI — analyst DB (never DATABASE_URI)</span>
+      <span class="pill">APP_DATABASE_URL — app/tenancy DB</span>
+      <span class="pill">JWT_SECRET · KEY_ENCRYPTION_SECRET</span>
+      <span class="pill">BILLING_PROVIDER=mock</span>
+      <span class="pill">PYTHONIOENCODING=utf-8 (Windows)</span>
+    </div>
+    <div class="call warn"><p class="h">▲ Sandbox reality</p><p>The Claude Code Bash sandbox blocks outbound HTTPS, so cloud LLMs, OpenAI embeddings, and LangSmith all fail there — only loopback (Ollama) works. Validate cloud paths against the Docker stack, not the sandbox.</p></div>
+  </section>
+
+  <footer>
+    <p class="kicker">northwind-copilot — architecture datasheet</p>
+    <p>Generated from a full read of the codebase: <code>core · infra · query · response · web</code> (Module A) and <code>tenancy · auth · datasets · conversations · metering · billing · keys</code> (Module B). One repository, two layers, dependencies pointing inward — a read-only SQL analyst you can run on a laptop, wrapped in a SaaS that bills by the token.</p>
+    <p>Cross-checked against <code>CLAUDE.md</code>, <code>README.md</code>, and the module docstrings. Where this document names a file or function, it exists at that path.</p>
+  </footer>
+
+  </main>
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('themebtn');
+  var stored=null; try{stored=localStorage.getItem('nw-theme');}catch(e){}
+  if(stored){root.setAttribute('data-theme',stored);}
+  function current(){
+    var t=root.getAttribute('data-theme');
+    if(t) return t;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark':'light';
+  }
+  btn.addEventListener('click',function(){
+    var next=current()==='dark'?'light':'dark';
+    root.setAttribute('data-theme',next);
+    try{localStorage.setItem('nw-theme',next);}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>
+
+

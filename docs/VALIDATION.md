@@ -181,7 +181,7 @@ All four ship in-code and are covered by unit/API tests; check the UX and the
 - **Google OAuth** — endpoints not wired yet; email+password only.
 - **Rate-limit-by-user** — the limiter is still keyed by client IP.
 - **Ops installs** — `deploy/backup.sh` + restore drill, UptimeRobot, staging
-  compose project: manual steps in [deploy/OPS.md](deploy/OPS.md).
+  compose project: manual steps in [deploy/OPS.md](../deploy/OPS.md).
 - **Dataset schema LLM enrichment** — only the mechanical schema summary is generated so far (the `describe` hook exists, unused).
 
 ## If something breaks

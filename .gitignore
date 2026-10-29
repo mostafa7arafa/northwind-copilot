@@ -23,6 +23,10 @@ frontend/out/
 CLAUDE.md
 .claude/
 
+# Agent tooling (local skills cache; not part of the project)
+.agents/
+skills-lock.json
+
 # SaaS: secrets, app database, and per-tenant dataset files
 deploy/.env
 data/app.sqlite
