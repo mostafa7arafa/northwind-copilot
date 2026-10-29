@@ -83,6 +83,8 @@ tool call. `tools` is a single node. On this static graph it exposes
 `sql_db_list_tables`, `sql_db_schema`, `sql_db_query`, `sql_db_query_checker`,
 and `search_docs` (FAISS over `docs/*.md`).
 
+For a function-by-function walkthrough, see the [architecture datasheet](docs/architecture.html). GitHub shows that file as source; it renders via a raw HTML preview: <https://htmlpreview.github.io/?https://github.com/mostafa7arafa/northwind-copilot/blob/master/docs/architecture.html>.
+
 Everything Python lives in the single package `northwind_copilot/`, split into
 concern-focused layers. Dependencies point **inward**: `web` → `response` →
 `query` → `infra` → `core`; nothing in `core` imports anything above it.
