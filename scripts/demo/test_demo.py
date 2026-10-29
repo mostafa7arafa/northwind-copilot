@@ -51,8 +51,11 @@ class MediaTests(unittest.TestCase):
         self.assertEqual((video["width"], video["height"]), (1200, 675))
         self.assertTrue(9 <= float(data["format"]["duration"]) <= 11)
         self.assertLess(int(data["format"]["size"]), 10 * 1024 * 1024)
-        # No NETSCAPE application extension: do not loop indefinitely.
-        self.assertNotIn(b"NETSCAPE2.0", (ASSETS / "demo.gif").read_bytes())
+        # NETSCAPE application extension with loop count 0: loop forever.
+        gif = (ASSETS / "demo.gif").read_bytes()
+        i = gif.find(b"NETSCAPE2.0")
+        self.assertNotEqual(i, -1)
+        self.assertEqual(gif[i + 14 : i + 16], b"\x00\x00")
 
     def test_poster_is_full_hd(self):
         video = probe("demo-poster.png")["streams"][0]
