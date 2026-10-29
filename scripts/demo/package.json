@@ -1,0 +1,12 @@
+{
+  "name": "northwind-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "render": "node cards.mjs && python3 render.py"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}
