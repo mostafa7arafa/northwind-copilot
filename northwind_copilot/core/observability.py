@@ -35,7 +35,8 @@ def _scrub_value(value: Any) -> Any:
     return value
 
 
-def _before_send(event: dict, hint: dict) -> dict:
+# Sentry supplies both arguments; scrubbing only needs the event.
+def _before_send(event: dict, hint: dict) -> dict:  # noqa: F841
     """Sentry ``before_send`` hook: redact key material everywhere."""
     return _scrub_value(event)
 

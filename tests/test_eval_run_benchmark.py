@@ -50,7 +50,8 @@ class _FakeGraph:
         self._answer = answer
         self._raise = raise_exc
 
-    def invoke(self, inp, config=None):
+    # Match the graph API; this fake returns its preconfigured answer.
+    def invoke(self, inp, config=None):  # noqa: F841
         if self._raise is not None:
             raise self._raise
         return {

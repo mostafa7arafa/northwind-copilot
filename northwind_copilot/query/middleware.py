@@ -32,8 +32,9 @@ def make_trim_context(max_tokens: int):
         A ``before_model`` middleware instance.
     """
 
+    # The middleware callback receives runtime even though trimming needs only state.
     @before_model
-    def trim_context(state, runtime):
+    def trim_context(state, runtime):  # noqa: F841
         trimmed = trim_messages(
             state["messages"],
             token_counter="approximate",

@@ -22,8 +22,11 @@ class _FakeStore:
 class _FakeFAISS:
     last_built = None
 
+    # Match FAISS's keyword API; the fake never deserializes anything.
     @staticmethod
-    def load_local(path, embeddings, allow_dangerous_deserialization=False):
+    def load_local(
+        path, embeddings, allow_dangerous_deserialization=False  # noqa: F841
+    ):
         return _FakeStore(docs="loaded")
 
     @staticmethod
