@@ -44,6 +44,27 @@ class TestBuildModel:
         assert isinstance(model, ChatOpenAI)
         assert "openrouter.ai" in str(model.openai_api_base)
 
+    @pytest.mark.parametrize("provider", ["openai", "openrouter"])
+    @pytest.mark.parametrize(
+        "name", ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"]
+    )
+    def test_gpt6_disables_reasoning_with_tools(self, provider, name):
+        model_id = f"openai/{name}" if provider == "openrouter" else name
+        model = build_model(
+            EngineConfig(provider=provider, model=model_id, api_key="sk-x")
+        )
+        payload = model.bind_tools(
+            [{"type": "function", "function": {"name": "test_tool", "parameters": {}}}]
+        ).kwargs
+        assert payload["tools"]
+        assert model._default_params["reasoning_effort"] == "none"
+
+    def test_older_models_do_not_receive_reasoning_effort(self):
+        model = build_model(
+            EngineConfig(provider="openai", model="gpt-4.1-mini", api_key="sk-x")
+        )
+        assert "reasoning_effort" not in model._default_params
+
     def test_unknown_provider_raises(self):
         cfg = EngineConfig(provider="mystery", model="x")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="Unknown provider"):
