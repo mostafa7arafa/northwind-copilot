@@ -130,3 +130,18 @@ Keep the existing `core`, `infra`, `query`, `response`, `web`, and `eval`
 packages and separate hosted-domain packages. No module moves or identifier
 renames are justified in this pass. In particular, do not relocate the static
 graph or eval harness, rename `build_model`, or alter its GPT-6 handling.
+
+## Final validation
+
+- Full offline suite: **269 passed**, same 5 warnings as the baseline.
+- Total and per-module coverage summaries are identical to baseline: **75%**
+  including branches; no statement or branch coverage regression.
+- Black, isort, flake8, `uv lock --check`, and `git diff --check` pass.
+- `uv run vulture` passes with no findings at 80% or higher.
+- `uv run vulture --min-confidence 0` still reports all **87** review-only
+  findings described above; none were deleted or globally suppressed.
+- AST comparison against `631aa9f` confirms all five changed Python files have
+  identical syntax trees (comments/formatting only). No tests were added.
+- `query/agent_factory.py`, `query/graph.py`, `core/prompts.py`,
+  `core/definitions.py`, and the entire Python eval package have no diff.
+- No runtime dependency version changed; only pinned Vulture was added to dev.
