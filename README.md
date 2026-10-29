@@ -18,9 +18,9 @@ It ships three ways to use it:
   [WEBAPP.md](WEBAPP.md)),
 - a **benchmark harness** that grades the agent against a labelled dataset.
 
-[![Northwind Copilot demo: real result rows and a revenue chart](docs/assets/demo-poster.png)](docs/assets/northwind-demo.mp4)
+[![Northwind Copilot demo: a question becomes SQL, result rows and a revenue chart](docs/assets/demo.gif)](docs/assets/northwind-demo.mp4)
 
-[Watch the 28-second silent demo](docs/assets/northwind-demo.mp4) · [10-second GIF](docs/assets/demo.gif)
+[Watch the full 28-second silent demo](docs/assets/northwind-demo.mp4)
 
 *Real app footage using Northwind sample data and a cloud model. Waiting time trimmed.*
 
