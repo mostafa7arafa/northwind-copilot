@@ -15,14 +15,24 @@ from northwind_copilot.core.config import settings
 
 OLLAMA_TAGS_URL = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
 
-# Curated cloud defaults. The frontend also allows a free-typed model id.
+# Curated cloud defaults; the first entry is the frontend's default model.
+# Current general-purpose models: https://developers.openai.com/api/docs/models
+# The frontend also allows a free-typed model id.
 CURATED_OPENAI = [
+    {"id": "gpt-6-luna", "label": "GPT-6 Luna", "note": "fast, cheap"},
+    {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra", "note": "fast, efficient"},
+    {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "note": "balanced"},
+    {"id": "gpt-6-astra", "label": "GPT-6 Astra", "note": "flagship"},
     {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini", "note": "fast, cheap"},
     {"id": "gpt-4.1", "label": "GPT-4.1", "note": "strongest reasoning"},
     {"id": "gpt-4o-mini", "label": "GPT-4o mini", "note": "budget"},
 ]
 
 CURATED_OPENROUTER = [
+    {"id": "openai/gpt-6-luna", "label": "GPT-6 Luna", "note": "fast, cheap"},
+    {"id": "openai/gpt-6.1-terra", "label": "GPT-6.1 Terra", "note": "fast, efficient"},
+    {"id": "openai/gpt-6.1-sol", "label": "GPT-6.1 Sol", "note": "balanced"},
+    {"id": "openai/gpt-6-astra", "label": "GPT-6 Astra", "note": "flagship"},
     {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4", "note": "balanced"},
     {"id": "openai/gpt-4.1-mini", "label": "GPT-4.1 mini", "note": "fast"},
     {"id": "google/gemini-2.0-flash-001", "label": "Gemini 2.0 Flash", "note": "cheap"},

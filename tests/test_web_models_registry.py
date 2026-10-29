@@ -72,3 +72,22 @@ class TestListAllProviders:
         assert providers == {"openai", "openrouter"}
         openai = next(c for c in out["cloud"] if c["provider"] == "openai")
         assert openai["needs_key"] is True  # no env key set
+
+    def test_cloud_defaults_and_current_openai_models(self, monkeypatch):
+        async def _fake_ollama():
+            return []
+
+        monkeypatch.setattr(models_registry, "list_ollama_models", _fake_ollama)
+        out = asyncio.run(models_registry.list_all_providers())
+        expected = [
+            "gpt-6-luna",
+            "gpt-6.1-terra",
+            "gpt-6.1-sol",
+            "gpt-6-astra",
+        ]
+        for provider in out["cloud"]:
+            prefix = "openai/" if provider["provider"] == "openrouter" else ""
+            ids = [model["id"] for model in provider["models"]]
+            assert ids[:4] == [prefix + model for model in expected]
+            assert len(ids) == len(set(ids))
+            assert prefix + "gpt-4.1-mini" in ids
