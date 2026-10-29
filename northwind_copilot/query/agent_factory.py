@@ -112,6 +112,11 @@ def build_model(config: EngineConfig) -> BaseChatModel:
             "temperature": settings.temperature,
             "api_key": config.api_key,
         }
+        # GPT-6 Chat Completions requires reasoning disabled for function tools.
+        # Strip OpenRouter's provider prefix before checking the model family.
+        model_name = config.model.removeprefix("openai/")
+        if model_name.startswith(("gpt-6-", "gpt-6.")):
+            kwargs["reasoning_effort"] = "none"
         if config.provider == "openrouter":
             kwargs["base_url"] = OPENROUTER_BASE_URL
         kwargs.update(_insecure_http_clients())
