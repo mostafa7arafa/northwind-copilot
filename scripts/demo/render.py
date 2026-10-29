@@ -159,7 +159,7 @@ def main():
         video,
     )
 
-    # A ten-second teaser: question -> SQL/results -> chart. No endless looping.
+    # A ten-second teaser: question -> SQL/results -> chart, looping forever.
     gif_parts = [
         "[0:v]trim=end=2.5,setpts=PTS-STARTPTS[a]",
         "[1:v]trim=end=2.5,setpts=PTS-STARTPTS[b]",
@@ -188,7 +188,7 @@ def main():
         "[out]",
         "-an",
         "-loop",
-        "-1",
+        "0",
         OUT / "demo.gif",
     )
     run(
