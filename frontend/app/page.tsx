@@ -14,6 +14,7 @@ export default function Page() {
   const init = useStore((s) => s.init);
   const sessions = useStore((s) => s.sessions);
   const currentId = useStore((s) => s.currentId);
+  const historyLoading = useStore((s) => s.historyLoading);
   const running =
     sessions.find((s) => s.id === currentId)?.turns.some((t) => t.running) ?? false;
 
@@ -39,7 +40,7 @@ export default function Page() {
           </div>
           <ArtifactPanel />
         </main>
-        <Composer busy={running} />
+        <Composer busy={running || historyLoading} />
       </div>
       <SettingsPanel />
       <EasterEggs />

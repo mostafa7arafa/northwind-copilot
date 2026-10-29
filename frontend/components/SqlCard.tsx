@@ -9,8 +9,6 @@ import type { TableData } from "@/lib/types";
 import { CopyButton, GhostButton, Modal, Panel } from "./primitives";
 import { ResultsTable } from "./ResultsTable";
 
-const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
-
 const EDITOR_OPTIONS = {
   readOnly: true,
   minimap: { enabled: false },
@@ -49,7 +47,7 @@ const applyDeskTheme = (monaco: {
 };
 
 /** The generated SQL in a Monaco editor with copy / expand / fullscreen /
- * download — plus, on a hosted dataset, an edit-and-re-run mode: fix the
+ * download — plus, on an uploaded dataset, an edit-and-re-run mode: fix the
  * query in place and execute it through the same read-only, time-boxed path
  * the agent uses. Edited runs render their result inline and are never
  * written back into the conversation. */
@@ -57,7 +55,7 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
   const activeDatasetId = useStore((s) => s.activeDatasetId);
   const [expanded, setExpanded] = useState(false);
   const [full, setFull] = useState(false);
-  // Edit & re-run state (hosted datasets only).
+  // Edit & re-run state (uploaded datasets only).
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(sql);
   const [running, setRunning] = useState(false);
@@ -73,7 +71,7 @@ export function SqlCard({ sql, tint }: { sql: string; tint: string }) {
     ? Math.min(Math.max(natural, 240), 600)
     : Math.min(Math.max(natural, editing ? 120 : 0), 200);
 
-  const editable = HOSTED && !!activeDatasetId;
+  const editable = !!activeDatasetId;
 
   const startEdit = () => {
     setDraft(sql);

@@ -30,7 +30,6 @@ export function DatasetManager({
     try {
       setDatasets(await datasetsApi.list());
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return;
       setError("Couldn't load datasets.");
     }
   }
@@ -65,10 +64,15 @@ export function DatasetManager({
   }
 
   async function onDelete(id: string) {
-    await datasetsApi.remove(id);
-    // Deleting the connected dataset disconnects it (back to the sample DB).
-    if (id === activeId) onSelect(null);
-    await refresh();
+    setError("");
+    try {
+      await datasetsApi.remove(id);
+      // Deleting the connected dataset disconnects it (back to the sample DB).
+      if (id === activeId) onSelect(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't delete the dataset.");
+    }
   }
 
   const active = datasets.find((d) => d.id === activeId) ?? null;

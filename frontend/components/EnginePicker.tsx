@@ -8,7 +8,6 @@ import {
   Cloud,
   Cpu,
   KeyRound,
-  Sparkles,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -17,10 +16,6 @@ import type { ModelOption, Provider } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 const MENU_WIDTH = 288;
-
-// The hosted product is cloud-only (no Ollama daemon on the server), so the
-// Local/Cloud engine switch is hidden and inference runs on our metered keys.
-const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
 
 /** The engine dashboard: switch between the local and cloud brains, choose a
  * provider, and pick (or type) the exact model. The whole control is tinted by
@@ -76,18 +71,9 @@ export function EnginePicker() {
     setTyped("");
   };
 
-  // Hosted: the server's key covers this provider and the user hasn't added
-  // their own — surface that the free trial includes model calls.
-  const trialCovered =
-    HOSTED &&
-    cloud &&
-    !providerNeedsKey &&
-    !keys[provider as "openai" | "openrouter"];
-
   return (
     <div className="flex items-center gap-2">
-      {/* engine segmented control — hidden in the hosted product (cloud-only) */}
-      {!HOSTED && (
+      {/* engine segmented control */}
       <div className="flex items-center rounded-lg border border-hairline bg-bg p-0.5">
         {(
           [
@@ -123,7 +109,6 @@ export function EnginePicker() {
           );
         })}
       </div>
-      )}
 
       {/* cloud provider tabs */}
       {cloud && (
@@ -247,17 +232,6 @@ export function EnginePicker() {
           className="flex h-8 items-center gap-1.5 rounded-lg border border-warn/40 bg-warn/5 px-2.5 text-[12px] text-warn transition-colors hover:bg-warn/10"
         >
           <KeyRound size={12} /> Add key
-        </button>
-      )}
-
-      {trialCovered && (
-        <button
-          type="button"
-          onClick={() => openSettings(true)}
-          className="flex h-8 items-center gap-1.5 rounded-lg border border-electric/30 bg-electric/5 px-2.5 text-[12px] text-electric transition-colors hover:bg-electric/10"
-          title="Model calls are included in your free trial (our API key). Click to add your own key instead."
-        >
-          <Sparkles size={12} /> Free trial · included
         </button>
       )}
     </div>
