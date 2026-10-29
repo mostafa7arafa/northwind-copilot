@@ -1,57 +1,99 @@
 # Northwind Copilot
 
-A **local-first natural-language-to-SQL agent** over the Northwind retail
-database. Ask a question in plain English; the agent lists tables, reads the
-schema, consults an internal knowledge base, writes SQL, runs it, and answers
-with the numbers — never inventing figures.
+[![CI](https://github.com/mostafa7arafa/northwind-copilot/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mostafa7arafa/northwind-copilot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-It runs primarily on a **local Ollama model** and only escalates to a cloud
-model (OpenAI) when the local one fails or returns nothing usable. It ships
-three ways to use it:
+A local-first natural-language-to-SQL agent over the Northwind retail database.
+Ask a question in plain English; the agent lists tables, reads the schema,
+consults an internal knowledge base, writes SQL, runs it, and answers with the
+numbers — never inventing figures. It runs primarily on a local Ollama model
+(`gemma4-12b`) and only escalates to a cloud model (`gpt-4.1-mini` on OpenAI)
+when the local one fails or returns nothing usable.
+
+It ships three ways to use it:
 
 - a **LangGraph agent** (`langgraph dev`),
 - a **FastAPI + Next.js web app** — the "Northwind Trading Desk" (see
   [WEBAPP.md](WEBAPP.md)),
 - a **benchmark harness** that grades the agent against a labelled dataset.
 
+<!-- DEMO GIF: docs/assets/demo.gif (15s Trading Desk recording, cloud mode) -->
+<!-- ![Northwind Trading Desk demo](docs/assets/demo.gif) -->
+
+## Results at a glance
+
+23 scenarios / 69 turns per arm. Higher is better for the judged metrics.
+Local `gemma4-12b` against cloud `gpt-4.1-mini`.
+
+| | `gemma4-12b` (local) | `gpt-4.1-mini` (cloud) |
+| --- | --- | --- |
+| **correctness** | **89.9%** | **90.6%** |
+| **no_hallucination** | **98.6%** | **98.6%** |
+| **context_retention** | **91.3%** | 87.0% |
+| correctness — turn 1 | 82.6% | 90.9% |
+| correctness — turn 2 | 95.7% | 91.3% |
+| correctness — turn 3 | 91.3% | 91.3% |
+| latency / turn | 6.98 s | 5.69 s |
+| latency / conversation | 20.94 s | 17.07 s |
+| input tokens / conversation | 12,594 | 21,886 |
+| output tokens / conversation | 553 | 712 |
+| model calls / conversation | 8.5 | 9.6 |
+| cost / 1,000 conversations | **$0** | ~$9.89 |
+
+The machine, the judge, what the gaps do and don't support, and how to
+reproduce the run are in
+[Evaluation](#evaluation-can-a-local-model-actually-do-this-job).
+
 ---
 
 ## Architecture
 
+`langgraph.json` compiles `northwind_copilot/query/graph.py:graph`
+(`create_agent`). Besides `__start__` and `__end__`, the compiled graph has
+three nodes: `trim_context.before_model`, `model`, and `tools`. Local-to-cloud
+escalation is not its own node.
+`EscalateToFallbackMiddleware.wrap_model_call` runs inside `model`: it calls
+Ollama first, and calls OpenAI only when that call raises or returns an empty
+completion (no text and no tool call). With no `OPENAI_API_KEY`,
+`build_fallback_model` returns `None` and there is nothing to escalate to.
+
+```mermaid
+flowchart TD
+    startNode([__start__]) --> trim["trim_context.before_model"]
+    trim --> primary["model: ChatOllama PRIMARY_MODEL"]
+    primary --> gate{"usable response?"}
+    gate -->|yes| route{tool calls?}
+    gate -->|no| hasKey{"OPENAI_API_KEY set?"}
+    hasKey -->|yes| fallback["model: ChatOpenAI FALLBACK_MODEL"]
+    hasKey -->|no| stopNode["stop: re-raise, or return the empty completion"]
+    fallback --> fbGate{"usable response?"}
+    fbGate -->|yes| route
+    fbGate -->|no| stopNode
+    route -->|yes| tools["tools"]
+    route -->|no| endNode([__end__])
+    tools --> trim
+```
+
+The diamonds are that middleware decision, drawn so the escalation path is
+visible. They are not extra LangGraph nodes. On the stop path the middleware
+re-raises only when every model raised and none returned a message; an empty
+completion is returned instead, and the loop ends because that message has no
+tool call. `tools` is a single node. On this static graph it exposes
+`sql_db_list_tables`, `sql_db_schema`, `sql_db_query`, `sql_db_query_checker`,
+and `search_docs` (FAISS over `docs/*.md`).
+
 Everything Python lives in the single package `northwind_copilot/`, split into
 concern-focused layers. Dependencies point **inward**: `web` → `response` →
 `query` → `infra` → `core`; nothing in `core` imports anything above it.
-
-```
-northwind_copilot/
-├── core/            Business language — no I/O, pure config & text
-│   ├── config.py        env-driven `settings` singleton (frozen dataclass)
-│   ├── definitions.py   REVENUE_SQL, MARGIN_RATE — the KPI source of truth
-│   └── prompts.py       SYSTEM_PROMPT (static) + build_system_prompt (dynamic)
-├── infra/           Adapters to external systems
-│   ├── database.py      SQLDatabase over data/northwind.sqlite
-│   ├── llm.py           primary (Ollama) + optional fallback (OpenAI) factories
-│   ├── rag.py           FAISS index builder over docs/*.md
-│   └── docs_tool.py     the `search_docs` agent tool
-├── query/           Question → running SQL agent
-│   ├── graph.py         composition root; exports `graph` (langgraph.json target)
-│   ├── agent_factory.py per-request engine builder (ollama|openai|openrouter)
-│   └── middleware.py    escalate-on-degenerate + context trimming
-├── response/        Agent output → user-facing answer
-│   ├── charting.py      re-run SQL read-only (run_sql) + infer_chart
-│   └── streaming.py     translate the agent stream into pipeline SSE events
-├── web/             FastAPI service the frontend talks to
-│   ├── app.py           /api/health, /api/models, /api/chat, /api/preferences
-│   ├── models_registry.py  live Ollama + curated cloud model lists
-│   └── preferences.py   free-text analyst preferences persistence
-└── eval/            Benchmark harness
-    ├── graders.py       fuzzy numeric / contains_all / fields / rows graders
-    └── run_benchmark.py runs benchmark_dataset.jsonl, records model & latency
-
-frontend/            Next.js 15 "Trading Desk" UI (see WEBAPP.md)
-docs/                Knowledge base: KPI defs, marketing calendar, policies, catalog
-data/northwind.sqlite  The database (Orders span 2012–2023, not classic 1996–98)
-```
+`core` is config, KPI definitions, and prompts. `infra` is the database, the
+Ollama and OpenAI factories, and the doc index. `query` is the graph, the
+per-request engine builder (`ollama`, `openai`, or `openrouter`), and the
+middleware. `response` turns a finished turn into a table, a chart, and SSE
+events. `web` is the FastAPI service. `eval` is the benchmark harness. The
+Next.js Trading Desk lives in `frontend/`; the knowledge base is `docs/`; the
+database is `data/northwind.sqlite` (orders span 2012–2023, not classic
+1996–98).
 
 ### Key design decisions
 
@@ -73,17 +115,59 @@ data/northwind.sqlite  The database (Orders span 2012–2023, not classic 1996�
 
 ---
 
-## Setup
+## Quickstart
 
-Requires **Python 3.12+**, [uv](https://docs.astral.sh/uv/), and (for local
-inference) [Ollama](https://ollama.com/) running with at least one model pulled.
+Requires **Python 3.12+** and [uv](https://docs.astral.sh/uv/). Local inference
+also needs [Ollama](https://ollama.com/) running with `gemma4-12b` pulled. To
+skip the GPU, use [Cloud-only](#cloud-only-no-gpu) below.
 
 ```bash
-uv sync --group dev --native-tls      # runtime + test/lint tooling
+uv sync --group dev --group web
 cp .env.example .env                  # then edit — see "Configuration" below
 ```
 
-> On this Windows setup, `uv` needs `--native-tls` to reach PyPI.
+### Cloud-only (no GPU)
+
+The static graph always constructs an Ollama primary
+(`build_primary_model`). You do not need a GPU if a cloud key is set: a failed
+or empty local call escalates inside `model`. The Trading Desk can skip Ollama
+entirely by choosing the OpenAI engine, which never builds the local model.
+
+From [`.env.example`](.env.example):
+
+| Variable | Needed without Ollama |
+| --- | --- |
+| `OPENAI_API_KEY` | Required. Builds the OpenAI fallback and the RAG embeddings. |
+| `FALLBACK_MODEL` | Cloud model the static graph escalates to. Default `gpt-4.1-mini`. |
+| `EMBEDDING_MODEL` | OpenAI embeddings for `search_docs`. Default `text-embedding-3-small`. Uses the same `OPENAI_API_KEY`. |
+| `APP_AUTH_TOKEN` | Optional. When it is blank, the web API will not spend the server's `OPENAI_API_KEY` for an anonymous caller — paste a key in the Trading Desk settings, or set this token. |
+
+`PRIMARY_MODEL` and `OLLAMA_BASE_URL` are unused once you select the OpenAI
+engine in the web app. A second cloud provider, OpenRouter, reads
+`OPENROUTER_API_KEY`. That name is not in the root `.env.example` (it is in
+[`deploy/.env.example`](deploy/.env.example)); the root configuration table
+lists it for the multi-turn judge.
+
+```bash
+uv run langgraph dev                  # Ollama is tried first; errors escalate
+# or the web app, then pick OpenAI in the header (see Usage)
+```
+
+### Windows notes
+
+- `uv` needs `--native-tls` to reach PyPI:
+  `uv sync --group dev --group web --native-tls`.
+- Set `PYTHONIOENCODING=utf-8` before commands that print query results. Some
+  product and customer names carry accented characters that crash the Windows
+  console.
+
+### Run tests
+
+```bash
+uv sync --frozen --group dev --group web && uv run pytest
+```
+
+The suite runs fully offline — no LLM or network calls.
 
 ---
 
@@ -104,7 +188,7 @@ guide: **[WEBAPP.md](WEBAPP.md)**. In short:
 
 ```bash
 # backend (repo root)
-LANGCHAIN_TRACING_V2=false PYTHONIOENCODING=utf-8 \
+LANGCHAIN_TRACING_V2=false \
   uv run uvicorn northwind_copilot.web.app:app --port 8000
 # frontend (in ./frontend)
 npm install && npm run dev            # http://localhost:3000
@@ -113,14 +197,14 @@ npm install && npm run dev            # http://localhost:3000
 ### Run the benchmark
 
 ```bash
-PYTHONIOENCODING=utf-8 uv run python -m northwind_copilot.eval.run_benchmark
+uv run python -m northwind_copilot.eval.run_benchmark
 uv run python -m northwind_copilot.eval.run_benchmark --id sql_employee_count_usa
 uv run python -m northwind_copilot.eval.run_benchmark --limit 3 --no-save
 ```
 
 Results (accuracy, which model answered, latency) are written to
-`eval/results/latest.json`. Always set `PYTHONIOENCODING=utf-8` — some product
-and customer names carry accented characters that crash the Windows console.
+`eval/results/latest.json`. On Windows, set `PYTHONIOENCODING=utf-8` first
+([Windows notes](#windows-notes)).
 
 ---
 
@@ -323,4 +407,5 @@ experiment — it produces a confident, wrong comparison, which is worse.
 
 ## License
 
-Provided as-is for educational and evaluation purposes.
+[MIT](LICENSE). Copyright 2026 Mostafa Arafa. The software is provided as-is
+and may be used for educational and evaluation purposes.
