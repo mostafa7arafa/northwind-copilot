@@ -22,6 +22,8 @@ jobs:
           uv run black --check northwind_copilot tests
           uv run isort --check-only northwind_copilot tests
           uv run flake8 northwind_copilot tests
+      - name: Dead code (80%+ confidence)
+        run: uv run vulture
       - name: Tests
         run: uv run pytest
 

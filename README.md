@@ -100,6 +100,47 @@ Next.js Trading Desk lives in `frontend/`; the knowledge base is `docs/`; the
 database is `data/northwind.sqlite` (orders span 2012–2023, not classic
 1996–98).
 
+### Package layout
+
+The runtime graph above is not a folder map. The existing package boundaries
+are shown below; arrows show principal analyst dependencies and the web
+service's hosted integration points, not every import. Hosted packages also
+share tenancy/configuration and have cross-domain dependencies (for example,
+dataset routes use `web.security`). No module relocation is needed to match
+this layout.
+
+```mermaid
+flowchart TD
+    subgraph analyst["northwind_copilot/ — analyst layers and evaluation"]
+        web["web/ — FastAPI, model registry, preferences, security"]
+        response["response/ — SSE, SQL results, charts"]
+        query["query/ — graph, agent factory, middleware"]
+        infra["infra/ — database, model factories, document index"]
+        core["core/ — config, definitions, prompts, observability"]
+        evaluation["eval/ — benchmark harness, graders, multiturn"]
+        web --> response --> query --> infra --> core
+        evaluation --> query
+    end
+    subgraph hosted["northwind_copilot/ — hosted-domain packages"]
+        auth["auth/"]
+        tenancy["tenancy/"]
+        datasets["datasets/"]
+        conversations["conversations/"]
+        metering["metering/"]
+        billing["billing/"]
+        keys["keys/"]
+    end
+    web --> auth & tenancy & datasets & conversations & metering & billing & keys
+    frontend["frontend/ — Next.js"] -->|HTTP / SSE| web
+    langgraph["langgraph.json"] --> query
+```
+
+`northwind_copilot/eval/` contains Python code; root `eval/results/` stores
+benchmark artifacts. `migrations/` contains Alembic history, `deploy/` holds
+runtime packaging, `tests/` holds the offline suite, and `scripts/` holds
+support tooling. `docs/*.md` is runtime knowledge-base content; maintenance
+notes belong in subdirectories such as `docs/maintenance/`.
+
 ### Key design decisions
 
 - **Local-first, escalate-on-empty.** The local model sometimes returns an empty
@@ -391,15 +432,22 @@ defaults in [`core/config.py`](northwind_copilot/core/config.py):
 # Test suite (offline — no LLM or network calls)
 uv run pytest
 
-# Coverage (branch coverage; 72%+ per module, ~94% overall)
+# Coverage (includes branches; cleanup baseline: 75% overall)
 uv run pytest --cov --cov-report=term-missing
+
+# Dead-code gate (80%+ confidence; exact false positives documented inline)
+uv run vulture
+
+# Lower-confidence review list only — do not automatically delete findings
+uv run vulture --min-confidence 0
 
 # Lint gate (run before shipping)
 uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
 ```
 
-Every module is unit-tested with fakes so the suite never touches Ollama,
-OpenAI, or the network. `run_sql` and `build_database` run against the real
+The tests use fakes for external services so the suite never touches Ollama,
+OpenAI, or the network. The [cleanup audit](docs/maintenance/cleanup.md) records
+coverage limits, confirmed Vulture false positives, and deferred review items. `run_sql` and `build_database` run against the real
 `northwind.sqlite` **read-only**.
 
 The multi-turn eval's *instrument* is tested too
