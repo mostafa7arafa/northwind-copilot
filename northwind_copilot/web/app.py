@@ -25,7 +25,7 @@ from northwind_copilot.persistence.db import (
     dispose_engine,
     get_sessionmaker,
 )
-from northwind_copilot.query.agent_factory import EngineConfig, Provider
+from northwind_copilot.query.agent_factory import DatasetContext, EngineConfig, Provider
 from northwind_copilot.response.streaming import stream_chat
 from northwind_copilot.web.models_registry import list_all_providers
 from northwind_copilot.web.preferences import load_preferences, save_preferences
@@ -137,7 +137,9 @@ def _resolve_api_key(provider: str, browser_key: str | None) -> str | None:
     return os.getenv(env_var) if env_var else None
 
 
-async def _resolve_dataset(dataset_id: str | None, question: str = "") -> object | None:
+async def _resolve_dataset(
+    dataset_id: str | None, question: str = ""
+) -> DatasetContext | None:
     """Load a ready dataset, or use the built-in Northwind sample when omitted."""
     if not dataset_id:
         return None
@@ -146,7 +148,6 @@ async def _resolve_dataset(dataset_id: str | None, question: str = "") -> object
     from northwind_copilot.datasets.golden import select_examples
     from northwind_copilot.persistence.db import get_sessionmaker
     from northwind_copilot.persistence.models import Dataset
-    from northwind_copilot.query.agent_factory import DatasetContext
 
     async with get_sessionmaker()() as session:
         dataset = await session.get(Dataset, dataset_id)
@@ -281,6 +282,8 @@ async def chat(body: ChatRequest) -> StreamingResponse:
                     question=_last_question(body.messages),
                     recorder=recorder,
                 )
+            # CancelScope can suppress its own cancellation on exit.
+            return None
 
         yield _sse({"type": "conversation", "id": conversation_id})
         try:

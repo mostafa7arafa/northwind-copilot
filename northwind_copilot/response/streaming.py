@@ -21,6 +21,7 @@ from functools import lru_cache
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from northwind_copilot.core.config import settings
 from northwind_copilot.query.agent_factory import (
@@ -336,7 +337,7 @@ async def stream_chat(
     # is a standalone trace and the Threads view stays empty. The explicit
     # tracer callback (rather than LANGSMITH_TRACING auto-tracing) lets trace
     # uploads honor `insecure_tls` on TLS-intercepting networks.
-    run_config: dict[str, Any] = {}
+    run_config: RunnableConfig = {}
     if session_id:
         run_config["metadata"] = {"session_id": session_id}
     tracers = _tracing_callbacks()

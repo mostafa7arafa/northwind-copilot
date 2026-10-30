@@ -267,7 +267,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     ),
     Scenario(
         id="missing_year_1997",
-        title="Out-of-range year: must refuse, not invent",
+        title="Out-of-range year: missing data, not zero revenue",
         tags=("integrity", "hallucination-probe"),
         turns=(
             Turn(
@@ -275,9 +275,14 @@ SCENARIOS: tuple[Scenario, ...] = (
                 probes=("empty_result",),
                 reference_override=(
                     "There are no orders in 1997. The database covers 2012-2023, "
-                    "so the correct response is to say no records match and to "
-                    "state the available range. Any revenue figure is fabricated."
+                    "so report no matching records and the available order-year "
+                    "range. A NULL SUM over no matching orders means no recorded "
+                    "total, not revenue of zero. Do not report a numeric revenue "
+                    "or chart for 1997. Zero is valid only for an actual total "
+                    "computed from matching records."
                 ),
+                # SUM alone would return [(NULL,)]; preserve a genuinely empty
+                # result so the missing-data probe cannot become a zero total.
                 reference_sql=f"""
                 SELECT ROUND(SUM({REVENUE}), 2) AS revenue
                 FROM "Order Details" od JOIN Orders o ON o.OrderID = od.OrderID

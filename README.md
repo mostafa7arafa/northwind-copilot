@@ -348,6 +348,8 @@ Where they differ is instructive rather than damning:
 - `yoy_2016_2017` defeats **both** arms (33% / 50%). Multi-step year-over-year
   deltas per category are the hard case here, not a local-model weakness.
 
+See the [NULL-fix recheck methodology and limitations](docs/maintenance/eval-1997-null.md).
+
 ### Reproduce
 
 ```bash
@@ -455,7 +457,7 @@ uv run vulture
 uv run vulture --min-confidence 0
 
 # Lint gate (run before shipping)
-uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
+uv run ruff check . --fix && uv run black . && uv run mypy
 ```
 
 The tests use fakes for external services so the suite never touches Ollama,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from northwind_copilot.core.config import Settings, _env, _env_bool, settings
 from northwind_copilot.core.definitions import MARGIN_RATE, REVENUE_SQL
-from northwind_copilot.core.prompts import SYSTEM_PROMPT
+from northwind_copilot.core.prompts import SYSTEM_PROMPT, build_system_prompt
 
 
 class TestEnv:
@@ -71,6 +71,24 @@ class TestSystemPrompt:
     def test_business_formulas_interpolated(self):
         assert REVENUE_SQL in SYSTEM_PROMPT
         assert f"{int(MARGIN_RATE * 100)}%" in SYSTEM_PROMPT
+
+    def test_null_aggregate_guidance_for_every_engine_and_dataset(self):
+        for is_local, dataset_summary in (
+            (True, None),
+            (False, None),
+            (True, "Uploaded sales table"),
+            (False, "Uploaded sales table"),
+        ):
+            prompt = build_system_prompt(
+                is_local=is_local,
+                supports_charts=not is_local,
+                dataset_summary=dataset_summary,
+            )
+            rule = (
+                "- When aggregating, also SELECT COUNT(*) in the same query; "
+                "a NULL aggregate with zero matching rows means no data, not zero."
+            )
+            assert prompt.count(rule) == 1
 
     def test_no_question_specific_exemplar(self):
         # Guard against re-introducing benchmark-overfitting examples.

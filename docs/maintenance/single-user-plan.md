@@ -70,7 +70,7 @@ must not masquerade as the current product instructions.
 
 - All retained automated tests pass; add/adapt tests for changed product
   behavior. Removed SaaS tests naturally change the old 269-test total.
-- Black/isort/flake8, Vulture80+, frontend typecheck/build, launcher syntax,
+- Black, import-order/lint checks, Vulture80+, frontend typecheck/build, launcher syntax,
   lock consistency, and whitespace checks pass. No ruff/mypy or unrelated
   runtime dependency upgrades.
 - Exercise local startup/shutdown and API persistence without real model
