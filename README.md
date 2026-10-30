@@ -31,8 +31,7 @@ It ships three ways to use it:
 
 ## Results at a glance
 
-Original Windows experiment: 23 scenarios / 69 turns per arm. Higher is better
-for the judged metrics. A later cloud-only NULL-fix recheck is reported below.
+23 scenarios / 69 turns per arm. Higher is better for the judged metrics.
 Local `gemma4-12b` against cloud `gpt-4.1-mini`.
 
 | | `gemma4-12b` (local) | `gpt-4.1-mini` (cloud) |
@@ -309,8 +308,7 @@ the GPT arm; Gemini was disqualified for sharing a family with Gemma.)
 
 ### Results
 
-Original Windows experiment: 23 scenarios / 69 turns per arm. Higher is better
-for the judged metrics.
+23 scenarios / 69 turns per arm. Higher is better for the judged metrics.
 
 | | `gemma4-12b` (local) | `gpt-4.1-mini` (cloud) |
 | --- | --- | --- |
@@ -346,24 +344,7 @@ Where they differ is instructive rather than damning:
 - `yoy_2016_2017` defeats **both** arms (33% / 50%). Multi-step year-over-year
   deltas per category are the hard case here, not a local-model weakness.
 
-### 2026-10-30 NULL-fix recheck (cloud only)
-
-The 1997 probe now explicitly distinguishes no matching data / NULL from zero
-revenue. A fresh 23-scenario / 69-turn cloud replay gave:
-
-| Metric | Before fix | After fix |
-| --- | ---: | ---: |
-| correctness | 89.9% (62/69) | 89.9% (62/69) |
-| no_hallucination | 100% (69/69) | 98.6% (68/69) |
-| context_retention | 91.3% (21/23) | 91.3% (21/23) |
-| 1997 probe correctness | 1/1 | 1/1 |
-
-No correctness improvement is claimed: the cloud baseline already answered
-1997 correctly. The one new groundedness failure was in `yoy_2016_2017`.
-Ollama was unavailable, so the local arm and historical table above were not
-replaced. One missing baseline judge verdict was replayed against its unchanged
-saved answer; all verdicts are included. See
-[methodology, limitations and per-scenario evidence](docs/maintenance/eval-1997-null.md).
+See the [NULL-fix recheck methodology and limitations](docs/maintenance/eval-1997-null.md).
 
 ### Reproduce
 

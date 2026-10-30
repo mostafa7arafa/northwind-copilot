@@ -84,9 +84,11 @@ class TestSystemPrompt:
                 supports_charts=not is_local,
                 dataset_summary=dataset_summary,
             )
-            assert "NULL aggregate is not zero" in prompt
-            assert "COUNT(*)" in prompt
-            assert "no matching records" in prompt
+            rule = (
+                "- When aggregating, also SELECT COUNT(*) in the same query; "
+                "a NULL aggregate with zero matching rows means no data, not zero."
+            )
+            assert prompt.count(rule) == 1
 
     def test_no_question_specific_exemplar(self):
         # Guard against re-introducing benchmark-overfitting examples.

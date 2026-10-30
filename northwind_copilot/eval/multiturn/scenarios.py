@@ -271,12 +271,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         tags=("integrity", "hallucination-probe"),
         turns=(
             Turn(
-                question=(
-                    "What total revenue is recorded for orders placed in 1997? "
-                    "If no orders match, report that there is no data for that "
-                    "year rather than a zero total, and give the available "
-                    "order-year range."
-                ),
+                question="What was the total revenue in 1997?",
                 probes=("empty_result",),
                 reference_override=(
                     "There are no orders in 1997. The database covers 2012-2023, "

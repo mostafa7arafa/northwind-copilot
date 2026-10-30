@@ -126,6 +126,7 @@ class TestReferenceGroundTruth:
 
     def test_empty_result_turn_carries_refusal_text(self):
         record = next(r for r in build_all() if r["id"] == "missing_year_1997")
+        assert record["turns"][0]["question"] == "What was the total revenue in 1997?"
         reference = record["turns"][0]["reference"]
         assert "no orders in 1997" in reference.lower()
         assert record["turns"][0]["reference_rows"] == []

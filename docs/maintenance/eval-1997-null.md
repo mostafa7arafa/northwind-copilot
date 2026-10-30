@@ -11,13 +11,14 @@ sets but not SQL's one-row NULL aggregate. Removing the `HAVING` clause from
 the same query reproduces `[(None,)]` on the supplied database. `SUM` over no
 matching records is not a recorded revenue of zero.
 
-- Local, cloud, and uploaded-dataset analyst prompts now require checking the
-  matching row count before interpreting a NULL total. Genuine zero totals
+- Local, cloud, and uploaded-dataset analyst prompts now require selecting
+  COUNT(*) in the same aggregate query. Genuine zero totals
   from matching records remain valid. The static POC `SYSTEM_PROMPT` is unchanged.
 - The dataset builder rejects all-NULL reference values, including when a
   broken reference loses its `empty_result` tag. A genuine `0` remains valid.
-- The affected eval question and expected answer explicitly distinguish no
-  recorded data from zero revenue. The available order-year range is 2012–2023.
+- The original question, “What was the total revenue in 1997?”, is restored
+  without answer hints. The clarified reference distinguishes no recorded data
+  from zero revenue. The available order-year range is 2012–2023.
 - The existing correct reference SQL is retained and the committed JSONL is
   regenerated. A regression checks the entire committed golden copy against
   current reference SQL and wording.
@@ -52,8 +53,11 @@ Before and after runs overlapped: their latency is not a comparison metric.
 Neither dataset nor traces were published; both LangSmith tracing env flags
 were explicitly false. Raw local outputs remain under ignored `eval/results/`.
 
-The affected question **and** its reference changed intentionally. This is an
-instrument/prompt correction, not an isolated causal model-accuracy experiment.
+The measured implementation changed the question **and** its reference, so this
+was not an isolated causal model-accuracy experiment. Review subsequently
+restored the original unhinted question and shortened the prompt rule to require
+COUNT(*) in the same query. Per review, no benchmark was rerun for that revision;
+the scores below describe the earlier commits, not the current prompt/question.
 The cloud baseline already handled this probe correctly; the historically
 reported local failure cannot be rechecked without Ollama.
 
@@ -85,8 +89,8 @@ There is **no measured correctness gain**. The single groundedness failure
 after the change is in `yoy_2016_2017`, not the 1997 probe. This small,
 non-repeated, partly reworded experiment does not establish an overall quality
 change. The historical Windows local/cloud table is preserved; the README
-adds a separately labelled cloud recheck rather than mixing new cloud figures
-with an unrepeated historical local arm.
+links here rather than mixing new cloud figures with an unrepeated historical
+local arm.
 
 Compact per-scenario scores and probe answers are committed in
 [`eval-1997-null-results.json`](eval-1997-null-results.json). Reproduction uses
