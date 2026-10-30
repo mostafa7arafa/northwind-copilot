@@ -7,6 +7,7 @@ comparison, which is worse.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -112,6 +113,16 @@ class TestReferenceGroundTruth:
         for record in records:
             for turn in record["turns"]:
                 assert turn["reference"].strip()
+
+    def test_committed_golden_copy_matches_reference_queries(self):
+        committed = [
+            json.loads(line)
+            for line in Path("multiturn_dataset.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        assert committed == build_all()
 
     def test_empty_result_turn_carries_refusal_text(self):
         record = next(r for r in build_all() if r["id"] == "missing_year_1997")
