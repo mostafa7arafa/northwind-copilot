@@ -42,6 +42,19 @@ preserved as an archived, unmaintained
 [`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
 snapshot.
 
+### Schema policy
+
+There are **no migrations**. SQLAlchemy `create_all` initializes missing tables;
+it does not update existing tables after a model change. Startup rejects an
+incompatible workspace schema rather than silently modifying it.
+
+After changing a model, stop the app and back up the workspace and uploaded
+files. Either delete `data/workspace.sqlite` to start fresh (this loses saved
+conversations, feedback, and the dataset catalog), or update the schema by hand,
+for example by adding the required columns with SQLite SQL. Remove any leftover
+`workspace.sqlite-wal`/`workspace.sqlite-shm` files only when resetting the stopped
+workspace. Uploaded files are not automatically reimported after a reset.
+
 ## Request flow
 
 ```text
