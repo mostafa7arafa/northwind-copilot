@@ -108,6 +108,20 @@ class TestConversationsApi:
         assert detail.status_code == 200
         assert detail.json()["turns"][0]["question"] == "Q1"
 
+    async def test_detail_restores_persisted_feedback(self, local_client):
+        convo_id = await self._seed_conversation()
+        url = f"/api/conversations/{convo_id}"
+        turn = (await local_client.get(url)).json()["turns"][0]
+        assert turn["feedback"] is None
+        for vote in ("up", "down"):
+            response = await local_client.post(
+                f"{url}/turns/{turn['id']}/feedback", json={"vote": vote}
+            )
+            assert response.status_code == 200
+            # No browser/cache state is sent to this fresh detail request.
+            saved = (await local_client.get(url)).json()["turns"][0]
+            assert saved["feedback"] == vote
+
     async def test_rename_and_delete(self, local_client):
         convo_id = await self._seed_conversation()
         renamed = await local_client.patch(
@@ -123,6 +137,53 @@ class TestConversationsApi:
 
 
 class TestChatPersistence:
+    async def test_stable_turn_id_and_duplicate_rejection(
+        self, local_client, monkeypatch
+    ):
+        import json
+
+        from northwind_copilot.web import app as app_module
+
+        calls = []
+
+        async def fake(**kwargs):
+            calls.append(kwargs)
+            yield {"type": "final", "text": "Saved"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(app_module, "stream_chat", fake)
+        body = {
+            "turn_id": "stable-browser-turn",
+            "provider": "openai",
+            "messages": [{"role": "user", "content": "Q"}],
+        }
+        response = await local_client.post("/api/chat", json=body)
+        assert response.status_code == 200
+        events = [
+            json.loads(line[6:])
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert {"type": "turn", "id": body["turn_id"]} in events
+        convo_id = next(
+            event["id"] for event in events if event["type"] == "conversation"
+        )
+        detail = (await local_client.get(f"/api/conversations/{convo_id}")).json()
+        assert detail["turns"][0]["id"] == body["turn_id"]
+        duplicate = await local_client.post("/api/chat", json=body)
+        assert duplicate.status_code == 409
+        assert len(calls) == 1
+        assert len((await local_client.get("/api/conversations")).json()) == 1
+
+    @pytest.mark.parametrize("turn_id", ["", "a" * 37, "bad/id"])
+    async def test_invalid_turn_id_is_rejected(self, local_client, turn_id):
+        response = await local_client.post(
+            "/api/chat",
+            json={"turn_id": turn_id, "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 422
+        assert (await local_client.get("/api/conversations")).json() == []
+
     async def test_history_artifacts_and_keys_survive_without_storing_key(
         self, local_client, workspace_db, monkeypatch
     ):
@@ -303,6 +364,7 @@ async def test_cancelled_stream_close_persists_partial_turn(monkeypatch):
         app_module.ChatRequest(
             messages=[app_module.Message(role="user", content="Interrupted?")],
             provider="openai",
+            turn_id="interrupted-browser-turn",
         )
     )
     iterator = response.body_iterator
@@ -314,5 +376,6 @@ async def test_cancelled_stream_close_persists_partial_turn(monkeypatch):
     async with get_sessionmaker()() as session:
         turns = (await session.scalars(select(Turn))).all()
         assert len(turns) == 1
+        assert turns[0].id == "interrupted-browser-turn"
         assert turns[0].question == "Interrupted?"
         assert turns[0].queries == [{"sql": "SELECT 7"}]

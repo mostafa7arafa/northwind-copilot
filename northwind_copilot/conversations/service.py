@@ -106,9 +106,11 @@ async def persist_turn(
     conversation_id: str,
     question: str,
     recorder: TurnRecorder,
+    turn_id: str | None = None,
 ) -> Turn:
     """Write one recorded turn to the database."""
     turn = Turn(
+        id=turn_id,
         conversation_id=conversation_id,
         question=question,
         answer=recorder.answer,

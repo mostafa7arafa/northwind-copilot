@@ -7,6 +7,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
+from uuid import uuid4
 
 from anyio import CancelScope
 from fastapi import Depends, FastAPI
@@ -73,6 +74,10 @@ class ChatRequest(BaseModel):
     dataset_id: str | None = Field(default=None, max_length=36)
     # Omit to create a saved conversation; history is always server-owned.
     conversation_id: str | None = Field(default=None, max_length=36)
+    # Stable browser ID lets interrupted turns reconcile after a missed SSE event.
+    turn_id: str | None = Field(
+        default=None, min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
 
 class PreferencesRequest(BaseModel):
@@ -191,6 +196,10 @@ async def _prepare_conversation(
 
     question = _last_question(body.messages)
     async with get_sessionmaker()() as session:
+        if body.turn_id and await session.get(Turn, body.turn_id) is not None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=409, detail="Turn already exists.")
         try:
             convo = await ensure_conversation(
                 session,
@@ -238,6 +247,7 @@ async def chat(body: ChatRequest) -> StreamingResponse:
     )
     prefs = load_preferences()
     fallback = _build_fallback() if config.is_local else None
+    turn_id = body.turn_id or str(uuid4())
 
     async def event_source() -> AsyncIterator[bytes]:
         recorder = TurnRecorder()
@@ -253,6 +263,7 @@ async def chat(body: ChatRequest) -> StreamingResponse:
             with CancelScope(shield=True):
                 return await _finalize_turn(
                     conversation_id=conversation_id,
+                    turn_id=turn_id,
                     question=_last_question(body.messages),
                     recorder=recorder,
                 )
@@ -268,9 +279,9 @@ async def chat(body: ChatRequest) -> StreamingResponse:
                 dataset=dataset,
             ):
                 if event.get("type") == "done":
-                    turn_id = await finalize()
-                    if turn_id is not None:
-                        yield _sse({"type": "turn", "id": turn_id})
+                    saved_turn_id = await finalize()
+                    if saved_turn_id is not None:
+                        yield _sse({"type": "turn", "id": saved_turn_id})
                 recorder.observe(event)
                 yield _sse(event)
         finally:
@@ -288,7 +299,7 @@ def _sse(event: dict) -> bytes:
 
 
 async def _finalize_turn(
-    *, conversation_id: str, question: str, recorder: TurnRecorder
+    *, conversation_id: str, turn_id: str, question: str, recorder: TurnRecorder
 ) -> str | None:
     """Best-effort persistence, including interrupted streams."""
     try:
@@ -296,6 +307,7 @@ async def _finalize_turn(
             turn = await persist_turn(
                 session,
                 conversation_id=conversation_id,
+                turn_id=turn_id,
                 question=question,
                 recorder=recorder,
             )

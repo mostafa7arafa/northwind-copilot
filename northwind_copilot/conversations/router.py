@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from northwind_copilot.persistence.db import get_session
-from northwind_copilot.persistence.models import Conversation
+from northwind_copilot.persistence.models import Conversation, Turn, TurnFeedback
 from northwind_copilot.web.security import require_access
 
 router = APIRouter(
@@ -45,6 +45,7 @@ class TurnOut(BaseModel):
     error: dict | None
     model: str
     provider: str
+    feedback: Literal["up", "down"] | None
 
 
 class ConversationDetail(ConversationOut):
@@ -104,8 +105,17 @@ async def get_conversation(
     conversation_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> ConversationDetail:
-    """Return a conversation and its turns."""
+    """Return a conversation, its turns, and persisted feedback votes."""
     convo = await _load_conversation(session, conversation_id)
+    votes = dict(
+        (
+            await session.execute(
+                select(TurnFeedback.turn_id, TurnFeedback.vote)
+                .join(Turn, Turn.id == TurnFeedback.turn_id)
+                .where(Turn.conversation_id == convo.id)
+            )
+        ).all()
+    )
     return ConversationDetail(
         id=convo.id,
         title=convo.title,
@@ -122,6 +132,9 @@ async def get_conversation(
                 error=t.error,
                 model=t.model,
                 provider=t.provider,
+                feedback=(
+                    ("up" if votes[t.id] > 0 else "down") if t.id in votes else None
+                ),
             )
             for t in convo.turns
         ],
@@ -175,7 +188,7 @@ async def turn_feedback(
     ground truth; a thumbs-down retracts any example this turn produced. This
     is the feedback loop that makes a dataset's answers improve with use.
     """
-    from northwind_copilot.persistence.models import GoldenExample, Turn, TurnFeedback
+    from northwind_copilot.persistence.models import GoldenExample
 
     convo = await _load_conversation(session, conversation_id)
     turn = await session.get(Turn, turn_id)

@@ -70,7 +70,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 uv run --no-sync uvicorn northwind_copilot.web.app:app \
-  --host 127.0.0.1 --port 8000 --reload &
+  --host 127.0.0.1 --port 8000 --no-proxy-headers --reload &
 pids+=("$!")
 
 wait_ready() {

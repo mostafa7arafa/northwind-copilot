@@ -57,8 +57,9 @@ point.
 
 ## Local-only security
 
-The launcher binds both servers to loopback. The API checks loopback peers,
-Host, and allowed Origin values. Do not expose it through public tunnels,
+The launcher binds both servers to loopback and disables Uvicorn proxy-header
+handling. Keep `--no-proxy-headers` if starting Uvicorn manually. The API checks
+loopback peers, Host, and allowed Origin values. Do not expose it through public tunnels,
 reverse proxies, or LAN bindings: there is intentionally no user authentication.
 Generated SQL remains read-only, timeout-limited, and row-capped; uploads retain
 the 25 MB safety cap.
