@@ -20,6 +20,14 @@ class TestEngineConfig:
         assert cfg.is_local is True
         assert cfg.supports_charts is False
 
+    def test_api_key_is_not_exposed_in_repr(self):
+        cfg = EngineConfig(
+            provider="openai", model="gpt-4.1-mini", api_key="sk-test-secret"
+        )
+        assert cfg.api_key == "sk-test-secret"
+        assert "sk-test-secret" not in repr(cfg)
+        assert "api_key" not in repr(cfg)
+
     def test_cloud_flags(self):
         assert EngineConfig(provider="openai", model="gpt-4.1-mini").supports_charts
         assert EngineConfig(provider="openrouter", model="x").supports_charts

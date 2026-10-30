@@ -8,7 +8,7 @@ user pick the engine per request, so we assemble the agent here from an
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from langchain.agents import create_agent
@@ -46,7 +46,7 @@ class EngineConfig:
 
     provider: Provider
     model: str
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
 
     @property
     def is_local(self) -> bool:
