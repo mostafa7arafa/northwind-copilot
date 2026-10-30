@@ -107,16 +107,15 @@ def build_model(config: EngineConfig) -> BaseChatModel:
     if config.provider in _CLOUD_PROVIDERS:
         from langchain_openai import ChatOpenAI
 
+        from northwind_copilot.infra.llm import apply_gpt6_reasoning
+
         kwargs: dict = {
             "model": config.model,
             "temperature": settings.temperature,
             "api_key": config.api_key,
         }
         # GPT-6 Chat Completions requires reasoning disabled for function tools.
-        # Strip OpenRouter's provider prefix before checking the model family.
-        model_name = config.model.removeprefix("openai/")
-        if model_name.startswith(("gpt-6-", "gpt-6.")):
-            kwargs["reasoning_effort"] = "none"
+        apply_gpt6_reasoning(config.model, kwargs)
         if config.provider == "openrouter":
             kwargs["base_url"] = OPENROUTER_BASE_URL
         kwargs.update(_insecure_http_clients())

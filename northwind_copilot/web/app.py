@@ -121,7 +121,14 @@ def _build_fallback():
         return None
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(model=settings.fallback_model, temperature=settings.temperature)
+    from northwind_copilot.infra.llm import apply_gpt6_reasoning
+
+    kwargs: dict = {
+        "model": settings.fallback_model,
+        "temperature": settings.temperature,
+    }
+    apply_gpt6_reasoning(settings.fallback_model, kwargs)
+    return ChatOpenAI(**kwargs)
 
 
 def _resolve_api_key(provider: str, browser_key: str | None) -> str | None:

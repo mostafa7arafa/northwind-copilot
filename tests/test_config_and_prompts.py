@@ -41,7 +41,7 @@ class TestEnvBool:
 class TestSettings:
     def test_defaults(self):
         assert settings.primary_model == "gemma4-12b"
-        assert settings.fallback_model == "gpt-4.1-mini"
+        assert settings.fallback_model == "gpt-6-luna"
         assert settings.temperature == 0.0
         assert settings.sample_rows_in_table_info == 0
 

@@ -103,7 +103,7 @@ class Settings:
     """
 
     primary_model: str = _env("PRIMARY_MODEL", "gemma4-12b")
-    fallback_model: str = _env("FALLBACK_MODEL", "gpt-4.1-mini")
+    fallback_model: str = _env("FALLBACK_MODEL", "gpt-6-luna")
     embedding_model: str = _env("EMBEDDING_MODEL", "text-embedding-3-small")
     temperature: float = 0.0
     # NB: NOT "DATABASE_URI" — langgraph reserves that name for its own

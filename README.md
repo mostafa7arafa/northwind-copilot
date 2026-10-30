@@ -10,7 +10,7 @@ edit SQL, save conversations, and export tables and charts. Use Ollama locally
 or choose OpenAI/OpenRouter—no login, organizations, billing, or subscriptions.
 
 The separate static Northwind agent uses Ollama (`gemma4-12b`) with optional
-OpenAI fallback (`gpt-4.1-mini`) on errors or empty responses. The web app lets
+OpenAI fallback (`gpt-6-luna`) on errors or empty responses. The web app lets
 you choose its engine directly. The previous SaaS implementation is preserved
 as an archived, unmaintained
 [`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
@@ -196,7 +196,7 @@ From [`.env.example`](.env.example):
 | Variable | Needed without Ollama |
 | --- | --- |
 | `OPENAI_API_KEY` | Required. Builds the OpenAI fallback and the RAG embeddings. |
-| `FALLBACK_MODEL` | Cloud model the static graph escalates to. Default `gpt-4.1-mini`. |
+| `FALLBACK_MODEL` | Cloud model the static graph escalates to. Default `gpt-6-luna`. |
 | `EMBEDDING_MODEL` | OpenAI embeddings for `search_docs`. Default `text-embedding-3-small`. Uses the same `OPENAI_API_KEY`. |
 | `OPENROUTER_API_KEY` | Optional alternative cloud provider for the web app. |
 
@@ -413,7 +413,7 @@ defaults in [`core/config.py`](northwind_copilot/core/config.py):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PRIMARY_MODEL` | `gemma4-12b` | Local-first Ollama model |
-| `FALLBACK_MODEL` | `gpt-4.1-mini` | Cloud escalation model |
+| `FALLBACK_MODEL` | `gpt-6-luna` | Cloud escalation model |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embeddings for RAG |
 | `NORTHWIND_DATABASE_URI` | `sqlite:///data/northwind.sqlite` | Sample analyst database |
 | `WORKSPACE_DATABASE_URL` | `sqlite+aiosqlite:///data/workspace.sqlite` | Personal workspace metadata |
