@@ -45,11 +45,11 @@ class TestSettings:
         assert settings.temperature == 0.0
         assert settings.sample_rows_in_table_info == 0
 
-    def test_saas_defaults_are_poc_safe(self):
-        # Out of the box the app is the single-user POC, not the hosted product.
-        assert settings.hosted_mode is False
-        assert settings.tenant_data_dir == "data/tenants"
-        assert settings.app_db_url.startswith("sqlite+aiosqlite:///")
+    def test_local_workspace_defaults(self):
+        assert settings.dataset_data_dir == "data/datasets"
+        assert settings.workspace_db_url == "sqlite+aiosqlite:///data/workspace.sqlite"
+        for removed in ("hosted_mode", "app_db_url", "jwt_secret", "billing_provider"):
+            assert not hasattr(settings, removed)
 
     def test_is_frozen(self):
         import dataclasses

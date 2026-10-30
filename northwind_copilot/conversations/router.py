@@ -1,6 +1,5 @@
 """Conversation management API: list, read (with turns), rename, delete.
 
-Every route is org-scoped, so one tenant can never read another's history.
 Conversations are created implicitly by the chat endpoint, not here.
 """
 
@@ -14,11 +13,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from northwind_copilot.tenancy.db import get_session
-from northwind_copilot.tenancy.deps import RequestContext, current_org
-from northwind_copilot.tenancy.models import Conversation
+from northwind_copilot.persistence.db import get_session
+from northwind_copilot.persistence.models import Conversation, Turn, TurnFeedback
+from northwind_copilot.web.security import require_access
 
-router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/api/conversations",
+    tags=["conversations"],
+    dependencies=[Depends(require_access)],
+)
 
 
 class ConversationOut(BaseModel):
@@ -42,6 +45,7 @@ class TurnOut(BaseModel):
     error: dict | None
     model: str
     provider: str
+    feedback: Literal["up", "down"] | None
 
 
 class ConversationDetail(ConversationOut):
@@ -56,10 +60,10 @@ class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
-async def _load_owned(
-    session: AsyncSession, conversation_id: str, ctx: RequestContext
+async def _load_conversation(
+    session: AsyncSession, conversation_id: str
 ) -> Conversation:
-    """Fetch a conversation (with turns), enforcing org ownership."""
+    """Fetch a conversation with its turns."""
     convo = (
         await session.execute(
             select(Conversation)
@@ -67,22 +71,20 @@ async def _load_owned(
             .options(selectinload(Conversation.turns))
         )
     ).scalar_one_or_none()
-    if convo is None or convo.org_id != ctx.org_id:
+    if convo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
     return convo
 
 
 @router.get("", response_model=list[ConversationOut])
 async def list_conversations(
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> list[ConversationOut]:
-    """List the org's conversations, most recently updated first."""
+    """List conversations, most recently updated first."""
     convos = (
         (
             await session.execute(
                 select(Conversation)
-                .where(Conversation.org_id == ctx.org_id)
                 .options(selectinload(Conversation.turns))
                 .order_by(Conversation.updated_at.desc())
             )
@@ -101,11 +103,19 @@ async def list_conversations(
 @router.get("/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
     conversation_id: str,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> ConversationDetail:
-    """Return a conversation and its turns."""
-    convo = await _load_owned(session, conversation_id, ctx)
+    """Return a conversation, its turns, and persisted feedback votes."""
+    convo = await _load_conversation(session, conversation_id)
+    votes = dict(
+        (
+            await session.execute(
+                select(TurnFeedback.turn_id, TurnFeedback.vote)
+                .join(Turn, Turn.id == TurnFeedback.turn_id)
+                .where(Turn.conversation_id == convo.id)
+            )
+        ).all()
+    )
     return ConversationDetail(
         id=convo.id,
         title=convo.title,
@@ -122,6 +132,9 @@ async def get_conversation(
                 error=t.error,
                 model=t.model,
                 provider=t.provider,
+                feedback=(
+                    ("up" if votes[t.id] > 0 else "down") if t.id in votes else None
+                ),
             )
             for t in convo.turns
         ],
@@ -132,11 +145,10 @@ async def get_conversation(
 async def rename_conversation(
     conversation_id: str,
     body: RenameRequest,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> ConversationOut:
     """Rename a conversation."""
-    convo = await _load_owned(session, conversation_id, ctx)
+    convo = await _load_conversation(session, conversation_id)
     convo.title = body.title.strip()
     return ConversationOut(
         id=convo.id,
@@ -149,11 +161,10 @@ async def rename_conversation(
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
     conversation_id: str,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a conversation and its turns."""
-    convo = await _load_owned(session, conversation_id, ctx)
+    convo = await _load_conversation(session, conversation_id)
     await session.delete(convo)
 
 
@@ -168,7 +179,6 @@ async def turn_feedback(
     conversation_id: str,
     turn_id: str,
     body: FeedbackRequest,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Record a thumbs-up/down on a turn.
@@ -178,9 +188,9 @@ async def turn_feedback(
     ground truth; a thumbs-down retracts any example this turn produced. This
     is the feedback loop that makes a dataset's answers improve with use.
     """
-    from northwind_copilot.tenancy.models import GoldenExample, Turn, TurnFeedback
+    from northwind_copilot.persistence.models import GoldenExample
 
-    convo = await _load_owned(session, conversation_id, ctx)
+    convo = await _load_conversation(session, conversation_id)
     turn = await session.get(Turn, turn_id)
     if turn is None or turn.conversation_id != convo.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
@@ -188,7 +198,7 @@ async def turn_feedback(
     vote = 1 if body.vote == "up" else -1
     row = await session.get(TurnFeedback, turn_id)
     if row is None:
-        row = TurnFeedback(turn_id=turn_id, org_id=ctx.org_id, user_id=ctx.user_id)
+        row = TurnFeedback(turn_id=turn_id)
         session.add(row)
     row.vote = vote
 
@@ -204,7 +214,6 @@ async def turn_feedback(
             session.add(
                 GoldenExample(
                     dataset_id=convo.dataset_id,
-                    org_id=ctx.org_id,
                     source_turn_id=turn_id,
                     question=turn.question,
                     sql=first_sql,

@@ -115,7 +115,8 @@ class _FakeAgent:
         self._updates = updates
         self._raise = raise_exc
 
-    def astream(self, inp, stream_mode=None, config=None):
+    # Match the agent API; this fake emits only its preconfigured updates.
+    def astream(self, inp, stream_mode=None, config=None):  # noqa: F841
         updates, raise_exc = self._updates, self._raise
 
         async def gen():
@@ -128,7 +129,10 @@ class _FakeAgent:
 
 
 def _collect_stream(monkeypatch, agent):
-    monkeypatch.setattr(streaming, "build_agent_for", lambda config, **kw: agent)
+    # Accept production builder keywords without using them in the fake.
+    monkeypatch.setattr(
+        streaming, "build_agent_for", lambda config, **kw: agent  # noqa: F841
+    )
     monkeypatch.setattr(
         streaming,
         "run_sql",

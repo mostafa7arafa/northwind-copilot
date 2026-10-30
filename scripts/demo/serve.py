@@ -1,12 +1,11 @@
-"""Run the existing POC backend with disposable recording-only preferences/auth.
+"""Run the single-user backend with disposable recording preferences/workspace.
 
 Use the repository's virtualenv. Never changes .env or saved user preferences.
-The generated token file and settings live in ignored work/; do not publish it.
+Recording data lives in ignored work/; do not publish it.
 """
 
 import json
 import os
-import secrets
 import sys
 from pathlib import Path
 
@@ -16,13 +15,6 @@ WORK = Path(os.environ.get("DEMO_WORK_DIR", Path(__file__).parent / "work")).res
 
 def main():
     WORK.mkdir(parents=True, exist_ok=True)
-    token_path = WORK / "auth-token"
-    token = secrets.token_urlsafe(32)
-    # Restrict permissions when opening, not after writing the token.
-    fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w") as file:
-        file.write(token)
     preferences = WORK / "preferences.json"
     preferences.write_text(
         json.dumps(
@@ -35,10 +27,11 @@ def main():
             }
         )
     )
+    workspace_db = WORK / "workspace.sqlite"
     os.environ.update(
         {
-            "APP_AUTH_TOKEN": token,
-            "HOSTED_MODE": "false",
+            "WORKSPACE_DATABASE_URL": f"sqlite+aiosqlite:///{workspace_db}",
+            "DATASET_DATA_DIR": str(WORK / "datasets"),
             "LANGSMITH_API_KEY": "",
             "LANGCHAIN_API_KEY": "",
             "LANGSMITH_TRACING": "false",
@@ -53,8 +46,13 @@ def main():
 
     stored_preferences._STORE = preferences
     os.chdir(ROOT)
-    print(f"Demo backend on loopback only. Token file: {token_path}", flush=True)
-    uvicorn.run("northwind_copilot.web.app:app", host="127.0.0.1", port=8000)
+    print(f"Demo backend on loopback only. Recording workspace: {WORK}", flush=True)
+    uvicorn.run(
+        "northwind_copilot.web.app:app",
+        host="127.0.0.1",
+        port=8000,
+        proxy_headers=False,
+    )
 
 
 if __name__ == "__main__":

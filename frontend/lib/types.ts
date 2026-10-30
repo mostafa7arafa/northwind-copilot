@@ -47,7 +47,6 @@ export type ChatEvent =
   | ({ type: "table"; seq?: number } & TableData)
   | { type: "chart"; option: Record<string, unknown>; inferred: boolean; seq?: number }
   | { type: "insights"; text: string; bullets: string[] }
-  | { type: "usage"; credits: number; remaining: number | null; byok?: boolean }
   | { type: "final"; text: string }
   | { type: "error"; message: string; detail?: string }
   | { type: "done" };
@@ -85,9 +84,11 @@ export interface Turn {
   error?: { message: string; detail?: string };
   running: boolean;
   collapsed: boolean;
-  /** Hosted mode: the server-persisted turn id (from the `turn` SSE event);
+  /** The server-persisted turn id (from the `turn` SSE event);
    * required to attach feedback. */
   serverTurnId?: string;
+  /** History retained from a browser-only or detached legacy conversation. */
+  browserOnly?: boolean;
   /** The user's thumbs vote on this turn, if any. */
   feedback?: "up" | "down";
 }
@@ -111,18 +112,9 @@ export interface Session {
   title: string;
   turns: Turn[];
   createdAt: number;
-}
-
-// ---------------------------------------------------------------------------
-// Hosted (multi-tenant SaaS) types
-// ---------------------------------------------------------------------------
-
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  org_id: string;
-  plan: string;
+  conversationId?: string;
+  datasetId?: string | null;
+  turnCount?: number;
 }
 
 export type DatasetStatus = "processing" | "ready" | "failed";
@@ -146,35 +138,21 @@ export interface ConversationMeta {
   turn_count: number;
 }
 
-/** The org's plan + remaining allowance, from GET /api/usage. */
-export interface UsageInfo {
-  plan: string;
-  credits_remaining: number;
-  credits_per_month: number;
-  trial_queries_used: number;
-  trial_queries_limit: number;
-  trial_ends_at: string | null;
-  byok_providers: string[];
-  subscription_status: "active" | "past_due" | "cancelled" | null;
-  current_period_end: string | null;
-}
-
-/** One tier of the public plan sheet, from GET /api/billing/plans. */
-export interface PlanInfo {
+/** Saved artifacts returned by the conversation detail endpoint. */
+export interface SavedTurn {
   id: string;
-  price_usd: number;
-  credits_per_month: number;
-  max_datasets: number;
-  upload_cap_mb: number;
-  byok: boolean;
-  seats: number;
-  trial_days: number;
-  trial_queries: number;
+  question: string;
+  answer: string;
+  queries: QueryArtifact[];
+  charts: Record<string, unknown>[];
+  insights: Turn["insights"] | null;
+  error: Turn["error"] | null;
+  model: string;
+  provider: Provider;
+  /** Absent on older servers; null explicitly means unrated. */
+  feedback?: "up" | "down" | null;
 }
 
-/** Metadata of a stored BYOK key — the key itself is never returned. */
-export interface ApiKeyMeta {
-  provider: string;
-  last4: string;
-  set_at: string;
+export interface ConversationDetail extends ConversationMeta {
+  turns: SavedTurn[];
 }

@@ -46,7 +46,7 @@ def build_database(database_uri: str | None = None) -> SQLDatabase:
 
     For a file-backed SQLite database (the default) the connection is opened in
     ``mode=ro`` so the agent's SQL tool cannot mutate the data. For any other
-    backend (e.g. a future Postgres per-tenant deployment) the read-only
+    backend (e.g. a future Postgres connection) the read-only
     guarantee must come from the database role's grants; this adapter connects
     normally and leaves that to deployment.
 
@@ -55,8 +55,8 @@ def build_database(database_uri: str | None = None) -> SQLDatabase:
 
     Args:
         database_uri: SQLAlchemy URI to connect to. Defaults to the configured
-            Northwind database (the POC path); the hosted service passes a
-            per-tenant dataset's SQLite URI here.
+            Northwind database (the POC path); the web app passes an uploaded
+            dataset's SQLite URI here.
 
     Returns:
         A configured :class:`~langchain_community.utilities.SQLDatabase`.

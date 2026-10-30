@@ -43,14 +43,12 @@ const block = {
   transition: { type: "spring" as const, stiffness: 180, damping: 26 },
 };
 
-const HOSTED = process.env.NEXT_PUBLIC_HOSTED_MODE === "true";
-
 /** Thumbs on a finished turn. A thumbs-up on a dataset-backed answer stores
  * its (question → SQL) as a confirmed example the analyst reuses — the
  * feedback loop that makes answers improve with use. */
 function FeedbackButtons({ turn }: { turn: Turn }) {
   const sendFeedback = useStore((s) => s.sendFeedback);
-  if (!HOSTED || turn.running || !turn.serverTurnId) return null;
+  if (turn.running || !turn.serverTurnId) return null;
   return (
     <div className="mt-1 flex items-center gap-1">
       <button

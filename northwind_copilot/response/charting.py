@@ -65,8 +65,8 @@ def run_sql(sql: str, db_path: str | None = None) -> dict[str, Any] | None:
     Args:
         sql: The SQL statement captured from the agent's query tool call.
         db_path: Path to the SQLite file to query. Defaults to the configured
-            Northwind database (POC); the hosted service passes the per-tenant
-            dataset's file path.
+            Northwind database (POC); the web app passes an uploaded dataset's
+            file path.
 
     Returns:
         ``{"columns": [...], "rows": [[...]], "truncated": bool}`` on success,

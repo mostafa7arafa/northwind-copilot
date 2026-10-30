@@ -3,16 +3,18 @@
 ``TurnRecorder`` observes the same SSE events the client renders and accumulates
 them into a storable shape. The chat endpoint drives it as it streams and calls
 :func:`persist_turn` in a ``finally`` block, so a turn is saved even if the
-client disconnects mid-stream (which also matters for metering later).
+client disconnects mid-stream.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from northwind_copilot.tenancy.models import Conversation, Turn
+from northwind_copilot.persistence.models import Conversation, Turn
 
 
 class TurnRecorder:
@@ -66,8 +68,6 @@ class TurnRecorder:
 async def ensure_conversation(
     session: AsyncSession,
     *,
-    org_id: str,
-    user_id: str,
     dataset_id: str | None,
     conversation_id: str | None,
     title_hint: str,
@@ -76,26 +76,24 @@ async def ensure_conversation(
 
     Args:
         session: An open application-database session.
-        org_id: The caller's org.
-        user_id: The caller's user id.
         dataset_id: The dataset this conversation is about, if any.
         conversation_id: An existing conversation to append to, if provided.
         title_hint: Text (usually the first question) to title a new thread.
 
     Returns:
-        An owned, persisted :class:`Conversation`.
+        A persisted :class:`Conversation`.
 
     Raises:
-        ValueError: If ``conversation_id`` is given but not owned by the org.
+        ValueError: If the conversation is missing or its dataset conflicts.
     """
     if conversation_id:
         convo = await session.get(Conversation, conversation_id)
-        if convo is None or convo.org_id != org_id:
+        if convo is None:
             raise ValueError("conversation not found")
+        if dataset_id is not None and convo.dataset_id != dataset_id:
+            raise ValueError("conversation dataset mismatch")
         return convo
     convo = Conversation(
-        org_id=org_id,
-        user_id=user_id,
         dataset_id=dataset_id,
         title=(title_hint.strip()[:42] or "New analysis"),
     )
@@ -110,19 +108,32 @@ async def persist_turn(
     conversation_id: str,
     question: str,
     recorder: TurnRecorder,
+    turn_id: str | None = None,
+    reserved_turn: Turn | None = None,
 ) -> Turn:
-    """Write one recorded turn to the database."""
-    turn = Turn(
-        conversation_id=conversation_id,
-        question=question,
-        answer=recorder.answer,
-        queries=recorder.queries,
-        charts=recorder.charts,
-        insights=recorder.insights,
-        error=recorder.error,
-        model=recorder.model,
-        provider=recorder.provider,
+    """Create a turn or fill the row reserved before its SSE response starts."""
+    if reserved_turn is not None and (
+        reserved_turn.id != turn_id or reserved_turn.conversation_id != conversation_id
+    ):
+        raise ValueError("Turn reservation does not match the conversation.")
+    turn = (
+        reserved_turn
+        if reserved_turn is not None
+        else Turn(id=turn_id, conversation_id=conversation_id)
     )
+    turn.question = question
+    turn.answer = recorder.answer
+    turn.queries = recorder.queries
+    turn.charts = recorder.charts
+    turn.insights = recorder.insights
+    turn.error = recorder.error
+    turn.model = recorder.model
+    turn.provider = recorder.provider
     session.add(turn)
     await session.flush()
+    await session.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation_id)
+        .values(updated_at=datetime.now(timezone.utc))
+    )
     return turn

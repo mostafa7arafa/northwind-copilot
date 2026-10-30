@@ -1,63 +1,82 @@
-# Northwind Trading Desk — web app
+# Northwind Trading Desk
 
-A premium, AI-native analytics workspace over the Northwind copilot agent. Ask
-the ledger in plain language; the agent generates SQL, runs it, and the UI
-unfolds the answer as a live pipeline — **Understand → SQL → Execute → Results →
-Chart → Insights** — beside a result table and Apache ECharts visualization.
+A personal SQL-analyst workspace: upload CSV/XLSX/SQLite or use the Northwind
+sample, ask questions, inspect/edit SQL, and export results and charts.
+There are no accounts, organizations, plans, credits, or payment flows.
 
-It has two engine states you switch between in the header dashboard:
+## Start
 
-- **Local** — any model installed in your Ollama (auto-detected, e.g. `gemma4-12b`).
-- **Cloud** — **OpenAI** or **OpenRouter**, chosen per request. Cloud models get
-  an extended system prompt that asks them to draw their own ECharts spec; local
-  models are charted automatically by the server from the result table.
-
-Under **Settings** you can save free-text **analyst preferences** (appended to
-the system prompt on every question) and your **provider API keys** (kept in the
-browser only).
-
-## Architecture
-
-```
-frontend/                   Next.js 15 · React 19 · Tailwind v4 · Framer Motion
-                            · TanStack Table · Monaco (SQL) · ECharts · Zustand
-northwind_copilot/web/      FastAPI wrapping the LangGraph agent:
-                            GET  /api/models        local + cloud model registry
-                            POST /api/chat          SSE stream of pipeline events
-                            GET/POST /api/preferences
-```
-
-The frontend proxies `/api/*` to the backend (see `frontend/next.config.mjs`),
-so streaming isn't buffered and the browser sees one origin.
-
-## Run it
-
-**1. Backend** (from the repo root, using the existing uv venv):
+Requires Python 3.12+, uv, Node.js 20+, npm, and curl. The launcher targets
+Bash on Linux/macOS (or a Linux environment such as WSL).
 
 ```bash
-uv sync --group web --native-tls          # first time only
-# tracing off avoids noisy LangSmith calls if you don't use it
-LANGCHAIN_TRACING_V2=false PYTHONIOENCODING=utf-8 \
-  .venv/Scripts/python.exe -m uvicorn northwind_copilot.web.app:app --port 8000
+./dev.sh --setup      # Install locked dependencies; first run or after lock changes
+# Optional: cp .env.example .env, then edit your model/API-key settings
+./dev.sh
 ```
 
-**2. Frontend** (in another terminal):
+Open **http://127.0.0.1:3000**. Ctrl+C stops both servers. Startup fails clearly
+if dependencies are missing, ports 3000/8000 are occupied, or a server cannot
+become ready. It never overwrites `.env`, generates secrets, or starts Ollama.
 
-```bash
-cd frontend
-npm install                                 # first time only
-npm run dev                                  # http://localhost:3000
+- **Local:** start Ollama separately and pull a model; the picker lists installed
+  models. No GPU/local model is needed when using a cloud engine.
+- **Cloud:** choose OpenAI/OpenRouter and configure the appropriate server key in
+  `.env`, or enter a key in Settings. Browser-entered keys stay in memory, not
+  localStorage; re-enter them after refreshing.
+- **Document search:** `search_docs` uses OpenAI embeddings, even with local chat.
+  Without an OpenAI key, do not rely on this optional tool.
+
+## Data
+
+- `data/northwind.sqlite`: built-in sample, queried read-only.
+- `data/workspace.sqlite`: saved datasets, conversations, turns, and feedback.
+- `data/datasets/`: uploaded data converted into per-dataset SQLite files.
+- `.user_preferences.json`: local analyst preferences.
+- Browser storage: UI/session state; not a substitute for backing up workspace data.
+
+Back up the workspace database and uploaded files together while the app is
+stopped. Old SaaS databases, tenant files, encrypted provider keys, and Docker
+volumes are not automatically migrated or deleted. The old implementation is
+preserved as an archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot.
+
+### Schema policy
+
+There are **no migrations**. SQLAlchemy `create_all` initializes missing tables;
+it does not update existing tables after a model change. Startup rejects an
+incompatible workspace schema rather than silently modifying it.
+
+After changing a model, stop the app and back up the workspace and uploaded
+files. Either delete `data/workspace.sqlite` to start fresh (this loses saved
+conversations, feedback, and the dataset catalog), or update the schema by hand,
+for example by adding the required columns with SQLite SQL. Remove any leftover
+`workspace.sqlite-wal`/`workspace.sqlite-shm` files only when resetting the stopped
+workspace. Uploaded files are not automatically reimported after a reset.
+
+## Request flow
+
+```text
+Composer → store.ts → api.ts → POST /api/chat
+  → resolve dataset and saved history
+  → build agent → stream model/tool updates
+  → execute result SQL read-only → emit tables/charts/insights
+  → save turn → browser renders SSE events
 ```
 
-Open http://localhost:3000, pick an engine in the header, and ask a question.
+The Next.js server proxies `/api/*` to FastAPI on port 8000. The web app builds
+its own agent through `query/agent_factory.py`; it does not need a separate
+`langgraph dev` process. That command remains a separate agent-development entry
+point.
 
-## Notes
+## Local-only security
 
-- **Local engine** needs Ollama running (`ollama serve`) with at least one model
-  pulled. The picker lists whatever is installed.
-- **Cloud engines** need a key (Settings → Provider keys), or set `OPENAI_API_KEY`
-  in `.env` for OpenAI.
-- The RAG `search_docs` tool uses OpenAI embeddings, so questions about KPIs /
-  categories / policies need `OPENAI_API_KEY` set even on the local engine.
-- All generated SQL is executed **read-only** (`SELECT`/`WITH` only) for the
-  result table.
+The launcher binds both servers to loopback and disables Uvicorn proxy-header
+handling. Keep `--no-proxy-headers` if starting Uvicorn manually. The API checks
+loopback peers, Host, and allowed Origin values. Do not expose it through public tunnels,
+reverse proxies, or LAN bindings: there is intentionally no user authentication.
+Generated SQL remains read-only, timeout-limited, and row-capped; uploads retain
+the 25 MB safety cap.
+
+Manual checks: [validation guide](docs/maintenance/VALIDATION.md).

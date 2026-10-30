@@ -1,4 +1,4 @@
-"""Error tracking (Sentry) for the hosted service.
+"""Opt-in error tracking (Sentry) for the personal app.
 
 Opt-in via ``SENTRY_DSN`` and safe to run without the SDK installed (the POC
 and the test suite never need it). Every outgoing event passes through a
@@ -35,7 +35,8 @@ def _scrub_value(value: Any) -> Any:
     return value
 
 
-def _before_send(event: dict, hint: dict) -> dict:
+# Sentry supplies both arguments; scrubbing only needs the event.
+def _before_send(event: dict, hint: dict) -> dict:  # noqa: F841
     """Sentry ``before_send`` hook: redact key material everywhere."""
     return _scrub_value(event)
 

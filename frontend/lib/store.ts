@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  ApiError,
   conversationsApi,
+  datasetsApi,
   fetchModels,
   fetchPreferences,
-  fetchUsage,
   savePreferences,
   streamChat,
 } from "./api";
@@ -12,11 +13,11 @@ import type {
   Engine,
   ModelRegistry,
   Provider,
+  SavedTurn,
   Session,
   StageId,
   TableData,
   Turn,
-  UsageInfo,
 } from "./types";
 import { turnQueries } from "./types";
 
@@ -81,6 +82,36 @@ function turnMemory(t: Turn, engine: Engine): string {
   return parts.join("\n\n");
 }
 
+function detachConversation(session: Session, pendingTurnId?: string): Session {
+  return {
+    ...session,
+    conversationId: undefined,
+    turnCount: undefined,
+    turns: session.turns.map((turn) => turn.id === pendingTurnId
+      ? turn : { ...turn, browserOnly: true }),
+  };
+}
+
+function restoreTurn(saved: SavedTurn, cached?: Turn): Turn {
+  return {
+    id: cached?.id ?? saved.id,
+    serverTurnId: saved.id,
+    question: saved.question,
+    answer: saved.answer,
+    provider: saved.provider,
+    engine: saved.provider === "ollama" ? "local" : "cloud",
+    model: saved.model,
+    queries: saved.queries,
+    charts: saved.charts.map((option) => ({ option, inferred: false })),
+    insights: saved.insights ?? undefined,
+    error: saved.error ?? undefined,
+    stages: Object.fromEntries(STAGES.map((stage) => [stage, "done"])) as Turn["stages"],
+    running: false,
+    collapsed: cached?.collapsed ?? false,
+    feedback: saved.feedback === undefined ? cached?.feedback : saved.feedback ?? undefined,
+  };
+}
+
 interface Keys {
   openai: string;
   openrouter: string;
@@ -105,16 +136,13 @@ interface State {
   pinnedTurnId: string | null;
   kbHint: boolean; // radar toggle: nudge the agent to consult the knowledge base
   queryCount: number; // completed analyses — drives the milestone easter egg
-  // Hosted mode: the uploaded dataset to query, and the server-owned
-  // conversation this session maps to (learned from the `conversation` event).
+  // The selected data source; each session tracks its own saved conversation.
   activeDatasetId: string | null;
-  conversationId: string | null;
-  // Hosted mode: plan + remaining allowance (drives the header UsageMeter).
-  usage: UsageInfo | null;
+  historyLoading: boolean;
+  historyError: string;
 
   // actions
   init: () => Promise<void>;
-  refreshUsage: () => Promise<void>;
   setEngine: (engine: Engine) => void;
   setProvider: (provider: Provider) => void;
   setModel: (model: string) => void;
@@ -126,8 +154,8 @@ interface State {
   toggleKbHint: () => void;
   setActiveDataset: (id: string | null) => void;
   createSession: () => void;
-  selectSession: (id: string) => void;
-  deleteSession: (id: string) => void;
+  selectSession: (id: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
   toggleTurn: (turnId: string) => void;
   pinTurn: (turnId: string | null) => void;
   ask: (question: string) => Promise<void>;
@@ -152,51 +180,81 @@ export const useStore = create<State>()(
       kbHint: false,
       queryCount: 0,
       activeDatasetId: null,
-      conversationId: null,
-      usage: null,
-
-      refreshUsage: async () => {
-        try {
-          set({ usage: await fetchUsage() });
-        } catch {
-          /* meter is decorative; never block the app on it */
-        }
-      },
+      historyLoading: false,
+      historyError: "",
 
       init: async () => {
-        if (!get().currentId) set({ currentId: get().sessions[0].id });
-        void get().refreshUsage();
-        try {
-          const [registry, preferences] = await Promise.all([
-            fetchModels(),
-            fetchPreferences(),
-          ]);
-          set({ registry, preferences });
-          const s = get();
-          // If the local engine isn't available (always the case in the hosted
-          // product — no Ollama), force the cloud engine so requests don't go
-          // to a non-existent local daemon.
-          const localUsable = registry.local.available && s.engine === "local";
-          // Prefer a cloud provider the server already has a key for (no BYOK
-          // needed), e.g. our OpenRouter key in the hosted product.
-          const cloud =
-            registry.cloud.find((c) => !c.needs_key) ?? registry.cloud[0];
-          if (!localUsable && cloud?.models[0]) {
-            const cloudDefault = cloud.models[0].id;
-            // Coming from the local engine, a persisted model id is an Ollama
-            // model — reset to a cloud model so requests don't fail.
-            const keepModel = s.engine === "cloud" && s.model;
-            set({
+        const initial = get();
+        if (!initial.sessions.some((s) => s.id === initial.currentId)) {
+          const sessions = initial.sessions.length ? initial.sessions : [newSession()];
+          set({ sessions, currentId: sessions[0].id });
+        }
+        const datasetsReady = datasetsApi.list().then((datasets) => {
+          const available = new Set(datasets.map((d) => d.id));
+          set({
+            activeDatasetId: available.has(get().activeDatasetId ?? "")
+              ? get().activeDatasetId : null,
+            sessions: get().sessions.map((s) => s.datasetId && !available.has(s.datasetId)
+              ? { ...s, datasetId: null } : s),
+          });
+        });
+        // These are independent: a model service failure must not hide history.
+        await Promise.allSettled([
+          (async () => {
+            const registry = await fetchModels();
+            set({ registry });
+            const s = get();
+            if (s.engine === "local" && registry.local.available) {
+              if (!s.model) set({ provider: "ollama", model: registry.local.models[0]?.id ?? "" });
+              return;
+            }
+            const cloud =
+              (s.engine === "cloud" && registry.cloud.find((c) => c.provider === s.provider)) ||
+              registry.cloud.find((c) => !c.needs_key) || registry.cloud[0];
+            if (cloud) set({
               engine: "cloud",
               provider: cloud.provider,
-              model: keepModel || cloudDefault,
+              model: s.engine === "cloud" && s.provider === cloud.provider && s.model
+                ? s.model : cloud.models[0]?.id ?? "",
             });
-          } else if (!s.model && registry.local.models[0]) {
-            set({ provider: "ollama", model: registry.local.models[0].id });
-          }
-        } catch {
-          /* backend offline; UI still renders */
-        }
+          })(),
+          fetchPreferences().then((preferences) => set({ preferences })),
+          datasetsReady,
+          (async () => {
+            set({ historyLoading: true, historyError: "" });
+            try {
+              const listedIds = new Set(get().sessions.map((s) => s.conversationId).filter(Boolean));
+              const conversations = await conversationsApi.list();
+              // Validate cached data sources before selecting a legacy session.
+              await datasetsReady.catch(() => {});
+              const existing = get().sessions;
+              const saved = conversations.map((c) => {
+                const cached = existing.find((s) => s.conversationId === c.id);
+                return {
+                  ...cached,
+                  id: cached?.id ?? c.id,
+                  title: c.title,
+                  conversationId: c.id,
+                  datasetId: c.dataset_id,
+                  turnCount: c.turn_count,
+                  turns: cached?.turns ?? [],
+                  createdAt: cached?.createdAt ?? Date.now(),
+                };
+              });
+              // Retain browser-only history, including stale hosted sessions,
+              // but detach IDs the personal server does not recognize.
+              const local = existing.filter((s) => !saved.some((c) => c.id === s.id))
+                .map((s) => s.conversationId && listedIds.has(s.conversationId)
+                  ? detachConversation(s) : s);
+              set({ sessions: [...saved, ...local] });
+              await get().selectSession(get().currentId);
+            } catch {
+              set({ historyError: "Couldn't load saved analyses. Your browser history is still available." });
+            } finally {
+              set({ historyLoading: false });
+            }
+          })(),
+        ]);
       },
 
       setEngine: (engine) => {
@@ -230,29 +288,95 @@ export const useStore = create<State>()(
         set({ artifactWidth: Math.max(380, Math.min(width, 900)) }),
       openSettings: (open) => set({ settingsOpen: open }),
       toggleKbHint: () => set({ kbHint: !get().kbHint }),
-      // Switching dataset starts a fresh server-side conversation.
-      setActiveDataset: (id) => set({ activeDatasetId: id, conversationId: null }),
+      // A conversation belongs to one data source; don't relabel old turns.
+      setActiveDataset: (id) => {
+        if (id === get().activeDatasetId) return;
+        set({ activeDatasetId: id });
+        get().createSession();
+      },
 
       createSession: () => {
-        const s = newSession();
+        const s = { ...newSession(), datasetId: get().activeDatasetId };
         set({
           sessions: [s, ...get().sessions].slice(0, MAX_SESSIONS),
           currentId: s.id,
           pinnedTurnId: null,
-          conversationId: null, // a new session is a new server conversation
+          historyLoading: false,
+          historyError: "",
         });
       },
-      selectSession: (id) =>
-        set({ currentId: id, pinnedTurnId: null, conversationId: null }),
+      selectSession: async (id) => {
+        const session = get().sessions.find((s) => s.id === id);
+        if (!session) return;
+        set({
+          currentId: id,
+          pinnedTurnId: null,
+          activeDatasetId: session.datasetId ?? null,
+          historyError: "",
+          historyLoading: !!session.conversationId,
+        });
+        if (!session.conversationId) return;
+        try {
+          const detail = await conversationsApi.get(session.conversationId);
+          // Don't overwrite a turn that began streaming while the request ran.
+          set({
+            sessions: get().sessions.map((s) => {
+              if (s.id !== id || s.turns.some((t) => t.running)) return s;
+              // A recovered legacy session can contain browser-only turns.
+              // Restoring its new server history must not discard those.
+              const matches = (cached: Turn, saved: SavedTurn) =>
+                cached.id === saved.id || cached.serverTurnId === saved.id;
+              const unmatched = s.turns.filter((t) =>
+                !detail.turns.some((saved) => matches(t, saved))
+              );
+              const turns = [
+                ...unmatched.filter((t) => t.browserOnly),
+                ...detail.turns.map((t) => restoreTurn(t,
+                  s.turns.find((cached) => matches(cached, t))
+                )),
+                // An interrupted request may still be saving on the server.
+                ...unmatched.filter((t) => !t.browserOnly),
+              ];
+              return {
+                ...s,
+                title: detail.title,
+                datasetId: detail.dataset_id,
+                turnCount: turns.length,
+                turns,
+              };
+            }),
+          });
+          if (get().currentId === id) set({ activeDatasetId: detail.dataset_id });
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) {
+            set({
+              sessions: get().sessions.map((s) => s.id === id
+                ? detachConversation(s) : s),
+            });
+          } else if (get().currentId === id) {
+            set({ historyError: "Couldn't load this saved analysis. Try selecting it again." });
+          }
+        } finally {
+          if (get().currentId === id) set({ historyLoading: false });
+        }
+      },
 
-      deleteSession: (id) => {
+      deleteSession: async (id) => {
+        const session = get().sessions.find((s) => s.id === id);
+        if (session?.conversationId) {
+          try {
+            await conversationsApi.remove(session.conversationId);
+          } catch (err) {
+            if (!(err instanceof ApiError && err.status === 404)) {
+              set({ historyError: "Couldn't delete the saved analysis. Try again." });
+              return;
+            }
+          }
+        }
         const remaining = get().sessions.filter((s) => s.id !== id);
-        // Never leave the app with zero sessions — seed a fresh one.
-        const sessions = remaining.length ? remaining : [newSession()];
-        // If we deleted the active session, fall back to the newest remaining.
-        const currentId =
-          get().currentId === id ? sessions[0].id : get().currentId;
-        set({ sessions, currentId, pinnedTurnId: null });
+        const sessions = remaining.length ? remaining : [{ ...newSession(), datasetId: get().activeDatasetId }];
+        set({ sessions, pinnedTurnId: null });
+        if (get().currentId === id) await get().selectSession(sessions[0].id);
       },
 
       toggleTurn: (turnId) =>
@@ -272,8 +396,8 @@ export const useStore = create<State>()(
 
       ask: async (question) => {
         const trimmed = question.trim();
-        if (!trimmed) return;
-        const { currentId, provider, model, engine, keys, kbHint } = get();
+        if (!trimmed || get().historyLoading) return;
+        const { currentId, provider, model, engine, keys, kbHint, activeDatasetId } = get();
 
         const turn: Turn = {
           id: uid(),
@@ -296,6 +420,7 @@ export const useStore = create<State>()(
                       ? trimmed.slice(0, 42)
                       : s.title,
                   turns: [...s.turns, turn],
+                  turnCount: (s.turnCount ?? s.turns.length) + 1,
                 }
           ),
         });
@@ -364,17 +489,17 @@ export const useStore = create<State>()(
             ? keys.openrouter
             : undefined;
 
-        try {
+        const source = get().sessions.find((s) => s.id === currentId)!;
+        const request = async (conversationId = source.conversationId) => {
           await streamChat({
             messages: history,
             sessionId: currentId,
+            turnId: turn.id,
             provider,
             model,
             apiKey,
-            // Hosted mode: query the active dataset and continue the server-side
-            // conversation. Ignored by the POC backend.
-            datasetId: get().activeDatasetId ?? undefined,
-            conversationId: get().conversationId ?? undefined,
+            datasetId: activeDatasetId ?? undefined,
+            conversationId,
             onEvent: (e) => {
               switch (e.type) {
                 case "engine":
@@ -382,7 +507,11 @@ export const useStore = create<State>()(
                   break;
                 case "conversation":
                   // Learn (or confirm) which server conversation this maps to.
-                  set({ conversationId: e.id });
+                  set({
+                    sessions: get().sessions.map((s) => s.id === currentId
+                      ? { ...s, conversationId: e.id, datasetId: activeDatasetId }
+                      : s),
+                  });
                   break;
                 case "turn":
                   // The server-persisted turn id — needed to attach feedback.
@@ -433,26 +562,6 @@ export const useStore = create<State>()(
                 case "insights":
                   patch({ insights: { text: e.text, bullets: e.bullets } });
                   break;
-                case "usage": {
-                  // Live-update the meter from the stream; trial turns report
-                  // remaining *queries*, paid turns the remaining balance.
-                  const u = get().usage;
-                  if (!u || e.byok || e.remaining === null) break;
-                  if (u.plan === "trial") {
-                    set({
-                      usage: {
-                        ...u,
-                        trial_queries_used: Math.max(
-                          0,
-                          u.trial_queries_limit - e.remaining
-                        ),
-                      },
-                    });
-                  } else {
-                    set({ usage: { ...u, credits_remaining: e.remaining } });
-                  }
-                  break;
-                }
                 case "final":
                   patch({ answer: e.text });
                   set({ queryCount: get().queryCount + 1 });
@@ -463,6 +572,17 @@ export const useStore = create<State>()(
               }
             },
           });
+        };
+        try {
+          try {
+            await request();
+          } catch (err) {
+            // A deleted/stale conversation should not strand browser history.
+            if (!(err instanceof ApiError && err.status === 404 && source.conversationId)) throw err;
+            set({ sessions: get().sessions.map((s) => s.id === currentId
+              ? detachConversation(s, turn.id) : s) });
+            await request("");
+          }
         } catch (err) {
           patch({
             error: {
@@ -476,8 +596,9 @@ export const useStore = create<State>()(
       },
 
       sendFeedback: async (turnId, vote) => {
-        const { currentId, sessions, conversationId } = get();
+        const { currentId, sessions } = get();
         const session = sessions.find((s) => s.id === currentId);
+        const conversationId = session?.conversationId;
         const turn = session?.turns.find((t) => t.id === turnId);
         if (!turn?.serverTurnId || !conversationId) return;
         const prev = turn.feedback;
@@ -507,8 +628,34 @@ export const useStore = create<State>()(
       name: "trading-desk",
       // NB: `keys` (provider API keys) are deliberately NOT persisted. Keeping
       // them in localStorage exposes them to any XSS or shared-machine user;
-      // they live in memory only and are re-entered per session until the
-      // backend stores them per-user server-side.
+      // they live in memory only and can be re-entered each browser session.
+      merge: (saved, current) => {
+        // Ignore obsolete account state and any keys from older app versions.
+        const data = saved as Partial<State> | undefined;
+        const fields = [
+          "engine", "provider", "model", "sessions", "currentId", "sidebarOpen",
+          "artifactWidth", "kbHint", "queryCount", "activeDatasetId",
+        ] as const;
+        const restored = Object.fromEntries(
+          fields.filter((key) => data?.[key] !== undefined)
+            .map((key) => [key, data![key]])
+        );
+        return {
+          ...current,
+          ...restored,
+          // A previous tab may have closed during a stream.
+          sessions: (data?.sessions ?? current.sessions).map((session) => ({
+            ...session,
+            datasetId: session.datasetId !== undefined ? session.datasetId
+              : session.id === data?.currentId ? data.activeDatasetId ?? null : undefined,
+            turns: session.turns.map((turn) => ({
+              ...turn,
+              browserOnly: turn.browserOnly || !session.conversationId,
+              running: false,
+            })),
+          })),
+        };
+      },
       partialize: (s) => ({
         engine: s.engine,
         provider: s.provider,
@@ -520,7 +667,6 @@ export const useStore = create<State>()(
         kbHint: s.kbHint,
         queryCount: s.queryCount,
         activeDatasetId: s.activeDatasetId,
-        conversationId: s.conversationId,
       }),
     }
   )

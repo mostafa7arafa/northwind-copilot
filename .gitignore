@@ -27,7 +27,12 @@ CLAUDE.md
 .agents/
 skills-lock.json
 
-# SaaS: secrets, app database, and per-tenant dataset files
+# Personal workspace (never commit uploaded data or local database files)
+data/workspace.sqlite
+data/workspace.sqlite-*
+data/datasets/
+
+# Preserve ignores for any old SaaS data/secrets left in a local checkout.
 deploy/.env
 data/app.sqlite
 data/app.sqlite-*

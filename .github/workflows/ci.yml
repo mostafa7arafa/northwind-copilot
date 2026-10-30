@@ -22,8 +22,12 @@ jobs:
           uv run black --check northwind_copilot tests
           uv run isort --check-only northwind_copilot tests
           uv run flake8 northwind_copilot tests
+      - name: Dead code (80%+ confidence)
+        run: uv run vulture
       - name: Tests
         run: uv run pytest
+      - name: Launcher syntax and help
+        run: bash -n dev.sh && ./dev.sh --help
 
   frontend:
     name: Frontend (typecheck + build)
@@ -37,7 +41,9 @@ jobs:
         with:
           node-version: "20"
       - name: Install
-        run: npm ci || npm install
+        run: npm ci
+      - name: Frontend tests
+        run: npm test
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Build
@@ -60,34 +66,3 @@ jobs:
           version: "0.5.x"
       - name: Python dependency audit
         run: uvx pip-audit || true  # advisory until we triage the baseline
-
-  # Build and push images only after all checks pass on the main branches.
-  images:
-    name: Build & push images
-    needs: [backend, frontend, security]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.backend
-          push: true
-          tags: ghcr.io/${{ github.repository }}-backend:${{ github.sha }}
-      - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.frontend
-          push: true
-          tags: ghcr.io/${{ github.repository }}-frontend:${{ github.sha }}

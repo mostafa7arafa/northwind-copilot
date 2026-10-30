@@ -1,14 +1,11 @@
 /** Record a genuine live turn. No API mocking, credential persistence, or traces. */
 import { chromium } from 'playwright';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const work = path.resolve(process.env.DEMO_WORK_DIR || 'work');
 const baseURL = process.env.DEMO_URL || 'http://127.0.0.1:3000';
 const question = 'Which 5 products generated the most revenue in 2017?';
-const token = process.env.DEMO_TOKEN_FILE
-  ? (await readFile(process.env.DEMO_TOKEN_FILE, 'utf8')).trim()
-  : '';
 await mkdir(work, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 let context;
@@ -19,12 +16,6 @@ try {
     locale: 'en-US',
     colorScheme: 'dark',
   });
-  // Only attach a disposable local token to this app's API, never to CDN requests.
-  if (token) {
-    await context.route(`${new URL(baseURL).origin}/api/**`, route => route.continue({
-      headers: { ...route.request().headers(), authorization: `Bearer ${token}` },
-    }));
-  }
   await context.addInitScript(() => {
     localStorage.setItem('trading-desk', JSON.stringify({
       state: { engine: 'cloud', provider: 'openai', model: 'gpt-4.1-mini', sidebarOpen: false, artifactWidth: 760 },
