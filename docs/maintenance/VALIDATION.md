@@ -48,8 +48,8 @@ Postgres, billing provider, or Docker stack is required.
 ```bash
 PYTHONIOENCODING=utf-8 uv run pytest
 uv run black --check northwind_copilot tests
-uv run isort --check-only northwind_copilot tests
-uv run flake8 northwind_copilot tests
+uv run ruff check .
+uv run mypy
 uv run vulture
 bash -n dev.sh
 (cd frontend && npm test && npx tsc --noEmit && npm run build)
@@ -66,7 +66,7 @@ At implementation commit `99dd7e0`:
 - Backend: **246 tests passed**, including a real Uvicorn/socket regression that
   checks forwarded headers cannot replace the launcher's loopback peer.
 - Frontend: **14 tests passed**; TypeScript and production build passed.
-- Black/isort/flake8, Vulture80+, lock consistency, launcher syntax/help, and
+- Black, import-order/lint checks, Vulture80+, lock consistency, launcher syntax/help, and
   whitespace checks passed. Remaining dependency versions were not upgraded.
 - An isolated real `./dev.sh` smoke check verified UI/API proxy startup,
   no login/signup/auth/usage/billing routes, foreign-Origin rejection, CSV

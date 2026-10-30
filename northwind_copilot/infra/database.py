@@ -71,7 +71,7 @@ def build_database(database_uri: str | None = None) -> SQLDatabase:
 
     if is_sqlite_file:
         engine = create_engine(
-            "sqlite://", creator=_readonly_sqlite_creator(url.database)
+            "sqlite://", creator=_readonly_sqlite_creator(url.database)  # type: ignore[arg-type]  # mypy can't narrow url.database via is_sqlite_file
         )
         return SQLDatabase(
             engine, sample_rows_in_table_info=settings.sample_rows_in_table_info

@@ -15,7 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sentry_sdk.types import Event, Hint
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,7 @@ def _scrub_value(value: Any) -> Any:
 
 
 # Sentry supplies both arguments; scrubbing only needs the event.
-def _before_send(event: dict, hint: dict) -> dict:  # noqa: F841
+def _before_send(event: Event, hint: Hint) -> Event:  # noqa: F841
     """Sentry ``before_send`` hook: redact key material everywhere."""
     return _scrub_value(event)
 
