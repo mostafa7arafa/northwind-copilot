@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
@@ -27,3 +29,27 @@ class TestFallbackModel:
         model = build_fallback_model()
         assert isinstance(model, ChatOpenAI)
         assert model.model_name == settings.fallback_model
+
+    def test_default_gpt6_disables_reasoning(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        from northwind_copilot.web.app import _build_fallback
+
+        for model in (build_fallback_model(), _build_fallback()):
+            assert isinstance(model, ChatOpenAI)
+            assert settings.fallback_model == "gpt-6-luna"
+            assert model.model_name == "gpt-6-luna"
+            assert model.temperature == settings.temperature
+            assert model._default_params["reasoning_effort"] == "none"
+
+    def test_non_gpt6_omits_reasoning_effort(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+        patched = replace(settings, fallback_model="gpt-4.1-mini")
+        monkeypatch.setattr("northwind_copilot.infra.llm.settings", patched)
+        monkeypatch.setattr("northwind_copilot.web.app.settings", patched)
+        from northwind_copilot.web.app import _build_fallback
+
+        for model in (build_fallback_model(), _build_fallback()):
+            assert isinstance(model, ChatOpenAI)
+            assert model.model_name == "gpt-4.1-mini"
+            assert model.temperature == settings.temperature
+            assert "reasoning_effort" not in model._default_params

@@ -54,6 +54,23 @@ def build_primary_model() -> BaseChatModel:
     return build_ollama_model(settings.primary_model)
 
 
+def apply_gpt6_reasoning(model: str, kwargs: dict) -> None:
+    """Disable reasoning on a GPT-6 ChatOpenAI kwargs dict.
+
+    GPT-6 Chat Completions requires ``reasoning_effort="none"`` when function
+    tools are bound. OpenRouter ids may be prefixed with ``openai/``. Other
+    models are left unchanged. ``temperature`` is not touched; callers pass it
+    the same way ``build_model`` does, including for GPT-6.
+
+    Args:
+        model: Provider model id, with or without an ``openai/`` prefix.
+        kwargs: Chat model constructor arguments to update in place.
+    """
+    model_name = model.removeprefix("openai/")
+    if model_name.startswith(("gpt-6-", "gpt-6.")):
+        kwargs["reasoning_effort"] = "none"
+
+
 def build_fallback_model() -> BaseChatModel | None:
     """Build the cloud fallback chat model, if a key is configured.
 
@@ -70,4 +87,9 @@ def build_fallback_model() -> BaseChatModel | None:
     """
     if not os.getenv("OPENAI_API_KEY"):
         return None
-    return ChatOpenAI(model=settings.fallback_model, temperature=settings.temperature)
+    kwargs: dict = {
+        "model": settings.fallback_model,
+        "temperature": settings.temperature,
+    }
+    apply_gpt6_reasoning(settings.fallback_model, kwargs)
+    return ChatOpenAI(**kwargs)
