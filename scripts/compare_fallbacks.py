@@ -74,9 +74,20 @@ class Measurements(BaseCallbackHandler):
         self.usage: list[dict] = []
         self.missing_usage = 0
         self.model_errors = 0
-        self.tool_attempts = 0
-        self.tool_failures = 0
+        self.tool_attempt_ids: set[str] = set()
+        self.tool_failure_ids: set[str] = set()
+        self.tool_completed_ids: set[str] = set()
+        self.requested_tool_ids: set[str] = set()
+        self.tool_run_ids: dict[str, str] = {}
         self.invalid_tool_calls = 0
+
+    @property
+    def tool_attempts(self):
+        return len(self.tool_attempt_ids)
+
+    @property
+    def tool_failures(self):
+        return len(self.tool_failure_ids)
 
     def on_llm_end(self, response, **_kwargs):
         usage = (response.llm_output or {}).get("token_usage")
@@ -86,21 +97,53 @@ class Measurements(BaseCallbackHandler):
             self.missing_usage += 1
         for group in response.generations:
             for generation in group:
+                message = generation.message
                 self.invalid_tool_calls += len(
-                    getattr(generation.message, "invalid_tool_calls", []) or []
+                    getattr(message, "invalid_tool_calls", []) or []
                 )
+                for call in getattr(message, "tool_calls", []) or []:
+                    if call.get("id"):
+                        identity = str(call["id"])
+                        self.requested_tool_ids.add(identity)
+                        self.tool_attempt_ids.add(identity)
 
     def on_llm_error(self, _error, **_kwargs):
         self.model_errors += 1
 
-    def on_tool_start(self, _serialized, _input_str, **_kwargs):
-        self.tool_attempts += 1
+    def _tool_id(self, run_id=None, tool_call_id=None):
+        return str(tool_call_id or self.tool_run_ids.get(str(run_id), f"run:{run_id}"))
 
-    def on_tool_end(self, output, **_kwargs):
-        self.tool_failures += int(is_tool_failure(output))
+    def on_tool_start(
+        self, _serialized, _input_str, *, run_id=None, tool_call_id=None, **_kwargs
+    ):
+        identity = self._tool_id(run_id, tool_call_id)
+        self.tool_run_ids[str(run_id)] = identity
+        self.tool_attempt_ids.add(identity)
 
-    def on_tool_error(self, _error, **_kwargs):
-        self.tool_failures += 1
+    def on_tool_end(self, output, *, run_id=None, **_kwargs):
+        identity = self._tool_id(run_id, getattr(output, "tool_call_id", None))
+        self.tool_attempt_ids.add(identity)
+        self.tool_completed_ids.add(identity)
+        if is_tool_failure(output):
+            self.tool_failure_ids.add(identity)
+
+    def on_tool_error(self, _error, *, run_id=None, tool_call_id=None, **_kwargs):
+        identity = self._tool_id(run_id, tool_call_id)
+        self.tool_attempt_ids.add(identity)
+        self.tool_failure_ids.add(identity)
+
+    def on_chain_end(self, outputs, **_kwargs):
+        # Tool-node updates arrive before the whole invocation finishes. Unknown
+        # tools bypass tool callbacks, and graph/provider failures can follow.
+        if not isinstance(outputs, dict):
+            return
+        for message in outputs.get("messages", []) or []:
+            if getattr(message, "type", "") == "tool":
+                identity = str(message.tool_call_id)
+                self.tool_attempt_ids.add(identity)
+                self.tool_completed_ids.add(identity)
+                if is_tool_failure(message):
+                    self.tool_failure_ids.add(identity)
 
 
 def build_candidate(model_name: str):
@@ -151,12 +194,14 @@ def run_question(agent, record: dict, model: str, repetition: int) -> dict:
     passed, detail = (
         (False, error) if error else grade(record["grader"], answer, record["expected"])
     )
-    tool_messages = [m for m in messages if getattr(m, "type", "") == "tool"]
-    failures = (
-        measurements.tool_failures
-        if error
-        else sum(is_tool_failure(m) for m in tool_messages)
-    ) + measurements.invalid_tool_calls
+    measurements.on_chain_end({"messages": messages})
+    if error:
+        # Also retain calls whose tool node itself aborted before emitting any
+        # update. IDs reconcile model requests, node results and tool callbacks.
+        measurements.tool_failure_ids.update(
+            measurements.requested_tool_ids - measurements.tool_completed_ids
+        )
+    failures = measurements.tool_failures + measurements.invalid_tool_calls
     complete_usage = bool(measurements.usage) and not (
         measurements.missing_usage or measurements.model_errors
     )
@@ -171,8 +216,7 @@ def run_question(agent, record: dict, model: str, repetition: int) -> dict:
         "detail": detail,
         "latency_s": latency,
         "inference_cost_usd": cost,
-        "tool_attempts": max(measurements.tool_attempts, len(tool_messages))
-        + measurements.invalid_tool_calls,
+        "tool_attempts": measurements.tool_attempts + measurements.invalid_tool_calls,
         "tool_failures": failures,
         "model_errors": measurements.model_errors,
         "error": error,

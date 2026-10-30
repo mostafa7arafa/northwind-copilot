@@ -3,6 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from scripts.compare_fallbacks import (
     Measurements,
@@ -122,6 +123,88 @@ def test_aborted_question_keeps_failure_and_redacts_exception_message():
     assert result["error"] == "RuntimeError"
     assert "private" not in str(result)
     assert result["inference_cost_usd"] is None
+
+
+@pytest.mark.parametrize("emit_node_update", [False, True])
+def test_unknown_tool_failure_survives_a_later_invocation_abort(emit_node_update):
+    class Agent:
+        def invoke(self, _inputs, config):
+            callback = config["callbacks"][0]
+            callback.on_llm_end(
+                llm_result(
+                    {"prompt_tokens": 100, "completion_tokens": 10},
+                    AIMessage(
+                        content="",
+                        tool_calls=[{"name": "unknown", "args": {}, "id": "x"}],
+                    ),
+                )
+            )
+            if emit_node_update:
+                callback.on_chain_end(
+                    {
+                        "messages": [
+                            ToolMessage(
+                                content="Unknown tool", tool_call_id="x", status="error"
+                            )
+                        ]
+                    }
+                )
+            # No tool callbacks, then the graph fails before returning state.
+            raise RuntimeError("later provider or graph failure")
+
+    result = run_question(
+        Agent(),
+        {"id": "count", "question": "Count?", "grader": "numeric", "expected": 5},
+        "gpt-4.1-mini",
+        1,
+    )
+    assert result["tool_attempts"] == 1
+    assert result["tool_failures"] == 1
+    assert result["error"] == "RuntimeError"
+
+
+def test_real_graph_preserves_unknown_tool_update_before_a_later_abort():
+    def tool_node(_state):
+        return {
+            "messages": [
+                ToolMessage(content="Unknown tool", tool_call_id="x", status="error")
+            ]
+        }
+
+    def fail_node(_state):
+        raise RuntimeError("later node failed")
+
+    graph = (
+        StateGraph(MessagesState)
+        .add_node("tools", tool_node)
+        .add_node("fail", fail_node)
+        .add_edge(START, "tools")
+        .add_edge("tools", "fail")
+        .add_edge("fail", END)
+        .compile()
+    )
+    result = run_question(
+        graph,
+        {"id": "count", "question": "Count?", "grader": "numeric", "expected": 5},
+        "gpt-4.1-mini",
+        1,
+    )
+    assert result["error"] == "RuntimeError"
+    assert result["tool_attempts"] == 1
+    assert result["tool_failures"] == 1
+
+
+def test_callback_and_node_failure_ids_are_not_double_counted():
+    measurements = Measurements()
+    measurements.on_tool_start({}, "", run_id="r", tool_call_id="x")
+    measurements.on_tool_error(RuntimeError(), run_id="r", tool_call_id="x")
+    update = {
+        "messages": [ToolMessage(content="Failed", tool_call_id="x", status="error")]
+    }
+    measurements.on_chain_end(update)
+    measurements.on_chain_end(update)  # parent graph repeats the node's messages
+    assert measurements.tool_attempts == 1
+    assert measurements.tool_failures == 1
 
 
 def test_missing_usage_is_not_reported_as_free():
