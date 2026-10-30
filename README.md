@@ -259,6 +259,10 @@ Results (accuracy, which model answered, latency) are written to
 `eval/results/latest.json`. On Windows, set `PYTHONIOENCODING=utf-8` first
 ([Windows notes](#windows-notes)).
 
+To compare cloud fallback candidates independently of the local primary, run
+`uv run python scripts/compare_fallbacks.py` (three paired repetitions, local
+results only). See the [GPT-6 Luna evaluation and fallback decision](docs/maintenance/luna-fallback.md).
+
 ---
 
 ## Evaluation: can a local model actually do this job?
