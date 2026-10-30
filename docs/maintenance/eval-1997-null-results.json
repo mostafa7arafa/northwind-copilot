@@ -1,0 +1,772 @@
+{
+  "date": "2026-10-30",
+  "model": "gpt-4.1-mini",
+  "scenario_count": 23,
+  "turn_count": 69,
+  "baseline": "ef95205",
+  "implementation": "461e340",
+  "database_sha256": "de44ede8a51bd9d22a2a10f55fdc83365cf082a7be03379617be41d553d4b98a",
+  "local_model": "not run: Ollama unavailable",
+  "tracing": false,
+  "arms": {
+    "before": {
+      "summary": {
+        "correctness": {
+          "mean": 0.8985507246376812,
+          "count": 23
+        },
+        "no_hallucination": {
+          "mean": 1.0,
+          "count": 23
+        },
+        "context_retention": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "correctness_t1": {
+          "mean": 0.8695652173913043,
+          "count": 23
+        },
+        "correctness_t2": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "correctness_t3": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "turn_errors": 0,
+        "judge_failures": 0,
+        "judge_failures_initial": 1,
+        "missing_verdict_replays": 1
+      },
+      "scenarios": [
+        {
+          "id": "top_products_2017",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "busiest_employee_2018",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_category_2019",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "highest_freight_2020",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 0.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "missing_year_1997",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "discontinued_stock",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "aov_2020",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "margin_beverages_2021",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_country_2015",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "shipper_2022",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "supplier_breadth",
+          "scores": {
+            "correctness_t1": 0.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "best_worst_month",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "reports_to_fuller",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "orders_including_beverages_2018",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0,
+            "correctness_t3": 0.0,
+            "judge_failures_initial": 1
+          }
+        },
+        {
+          "id": "discount_usage",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "expensive_products",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 0.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "yoy_2016_2017",
+          "scores": {
+            "correctness_t1": 0.0,
+            "correctness_t2": 0.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.3333333333333333,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 0.0
+          }
+        },
+        {
+          "id": "lifetime_top_customer",
+          "scores": {
+            "correctness_t1": 0.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 0.0
+          }
+        },
+        {
+          "id": "longest_serving_employee",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_product_stability",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "seafood_customers_2021",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "freight_2017_drill",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "category_count_products",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        }
+      ],
+      "missing_year_answer": "There are no records of orders with revenue in the year 1997 in the database. You may want to check for a different year within the data range available (2012-2023)."
+    },
+    "after": {
+      "summary": {
+        "correctness": {
+          "mean": 0.8985507246376812,
+          "count": 23
+        },
+        "no_hallucination": {
+          "mean": 0.9855072463768116,
+          "count": 23
+        },
+        "context_retention": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "correctness_t1": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "correctness_t2": {
+          "mean": 0.9130434782608695,
+          "count": 23
+        },
+        "correctness_t3": {
+          "mean": 0.8695652173913043,
+          "count": 23
+        },
+        "turn_errors": 0,
+        "judge_failures": 0
+      },
+      "scenarios": [
+        {
+          "id": "top_products_2017",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "busiest_employee_2018",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_category_2019",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "highest_freight_2020",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 0.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "missing_year_1997",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "discontinued_stock",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "aov_2020",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "margin_beverages_2021",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_country_2015",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "shipper_2022",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "supplier_breadth",
+          "scores": {
+            "correctness_t1": 0.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "best_worst_month",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "reports_to_fuller",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "orders_including_beverages_2018",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 0.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "discount_usage",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "expensive_products",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 0.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "yoy_2016_2017",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 0.0,
+            "correctness_t3": 0.0,
+            "correctness": 0.3333333333333333,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 0.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 0.6666666666666666,
+            "context_retention": 0.0
+          }
+        },
+        {
+          "id": "lifetime_top_customer",
+          "scores": {
+            "correctness_t1": 0.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 0.6666666666666666,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 0.0
+          }
+        },
+        {
+          "id": "longest_serving_employee",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "top_product_stability",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "seafood_customers_2021",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "freight_2017_drill",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        },
+        {
+          "id": "category_count_products",
+          "scores": {
+            "correctness_t1": 1.0,
+            "correctness_t2": 1.0,
+            "correctness_t3": 1.0,
+            "correctness": 1.0,
+            "judge_failures": 0,
+            "no_hallucination_t1": 1.0,
+            "no_hallucination_t2": 1.0,
+            "no_hallucination_t3": 1.0,
+            "no_hallucination": 1.0,
+            "context_retention": 1.0
+          }
+        }
+      ],
+      "missing_year_answer": "There is no data for orders placed in 1997. The available order-year range in the database is from 2012 to 2023."
+    }
+  }
+}
