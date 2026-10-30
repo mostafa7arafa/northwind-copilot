@@ -139,8 +139,10 @@ flowchart TD
 `northwind_copilot/eval/` contains Python code; root `eval/results/` stores
 benchmark artifacts. `tests/` holds the offline suite, `scripts/` holds
 support tooling, and `dev.sh` starts the personal workspace. SaaS migrations
-and production deployment files belong to the archived, unmaintained [`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused) snapshot, not this branch. `docs/*.md` is runtime knowledge-base content; maintenance
-notes belong in subdirectories such as `docs/maintenance/`.
+and production deployment files belong to the archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot, not this branch. `docs/*.md` is runtime knowledge-base content;
+maintenance notes belong in subdirectories such as `docs/maintenance/`.
 
 ### Key design decisions
 
