@@ -62,18 +62,6 @@ python_version = "3.12"
 check_untyped_defs = true
 warn_unused_ignores = true
 
-# Preserve the protected read-only SQL adapter unchanged. Mypy cannot infer
-# url.database is non-None from the is_sqlite_file boolean (database.py:74).
-[[tool.mypy.overrides]]
-module = "northwind_copilot.infra.database"
-disable_error_code = ["arg-type"]
-
-# Preserve the eval instrument unchanged: ChatOpenAI's generated signature
-# rejects its supported max_tokens alias and coercible string api_key.
-[[tool.mypy.overrides]]
-module = "northwind_copilot.eval.multiturn.judges"
-disable_error_code = ["call-arg", "arg-type"]
-
 [tool.vulture]
 paths = ["northwind_copilot", "tests", "scripts"]
 min_confidence = 80

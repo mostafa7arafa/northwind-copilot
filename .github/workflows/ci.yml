@@ -27,7 +27,7 @@ jobs:
           uv run flake8 northwind_copilot tests
           uv run ruff check .
       - name: Typecheck (mypy)
-        run: uv run mypy
+        run: uv run python scripts/check_types.py
       - name: Dead code (80%+ confidence)
         run: uv run vulture
       - name: Tests
