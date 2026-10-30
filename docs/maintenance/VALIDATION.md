@@ -52,9 +52,32 @@ uv run isort --check-only northwind_copilot tests
 uv run flake8 northwind_copilot tests
 uv run vulture
 bash -n dev.sh
-(cd frontend && npx tsc --noEmit && npm run build)
+(cd frontend && npm test && npx tsc --noEmit && npm run build)
 ```
 
 Results from older SaaS validation instructions are not evidence that these
 personal-workspace checks passed. Record real-model/manual outcomes separately;
 do not substitute passing unit tests for an end-to-end trial.
+
+## Implementation check results
+
+At implementation commit `99dd7e0`:
+
+- Backend: **246 tests passed**, including a real Uvicorn/socket regression that
+  checks forwarded headers cannot replace the launcher's loopback peer.
+- Frontend: **14 tests passed**; TypeScript and production build passed.
+- Black/isort/flake8, Vulture80+, lock consistency, launcher syntax/help, and
+  whitespace checks passed. Remaining dependency versions were not upgraded.
+- An isolated real `./dev.sh` smoke check verified UI/API proxy startup,
+  no login/signup/auth/usage/billing routes, foreign-Origin rejection, CSV
+  upload, read-only SQL returning the expected sum, write rejection, deletion,
+  and Ctrl+C shutting down both servers. No real LLM was called.
+- Regression tests cover interrupted-turn reconciliation, delayed saves,
+  startup/list races, stable IDs, and restoring feedback without browser cache.
+- Independent standards and specification reviews found the initial recovery
+  issues; the second/final review confirmed the fixes with no unresolved issues.
+- GPT-6 model construction, the static graph, POC prompts/definitions, and the
+  evaluation instrument remain unchanged from the preserved `saas/paused` ref.
+
+Real-model answer quality, visual browser interaction, and a backup/restore drill
+remain manual checks, not completed claims in this implementation receipt.
