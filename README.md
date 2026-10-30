@@ -261,7 +261,7 @@ Results (accuracy, which model answered, latency) are written to
 
 To compare cloud fallback candidates independently of the local primary, run
 `uv run python scripts/compare_fallbacks.py` (three paired repetitions, local
-results only). See the [GPT-6 Luna evaluation and fallback decision](docs/maintenance/luna-fallback.md).
+results only). See the [GPT-6 Luna fallback comparison](docs/maintenance/luna-fallback.md).
 
 ---
 
