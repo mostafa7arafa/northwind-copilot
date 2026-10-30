@@ -7,13 +7,13 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
-from uuid import uuid4
 
 from anyio import CancelScope
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 
 from northwind_copilot.conversations.router import router as conversations_router
 from northwind_copilot.conversations.service import TurnRecorder, persist_turn
@@ -178,14 +178,14 @@ def _last_question(messages: list[Message]) -> str:
 
 async def _prepare_conversation(
     body: ChatRequest,
-) -> tuple[str, list[dict], str | None]:
-    """Resolve/create the conversation and rebuild history from stored turns.
+) -> tuple[str, list[dict], str | None, str]:
+    """Resolve history and reserve a unique turn before sending SSE headers.
 
     Server-owned history closes the client-forged-history hole: only the new
     question is taken from the request; all prior context comes from the DB.
 
     Returns:
-        ``(conversation_id, history, dataset_id)``.
+        ``(conversation_id, history, dataset_id, turn_id)``.
     """
     from sqlalchemy import select
 
@@ -196,10 +196,6 @@ async def _prepare_conversation(
 
     question = _last_question(body.messages)
     async with get_sessionmaker()() as session:
-        if body.turn_id and await session.get(Turn, body.turn_id) is not None:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=409, detail="Turn already exists.")
         try:
             convo = await ensure_conversation(
                 session,
@@ -228,8 +224,27 @@ async def _prepare_conversation(
             .all()
         )
         history = build_history(list(turns), question)
-        await session.commit()
-        return convo.id, history, convo.dataset_id
+        recorder = TurnRecorder()
+        recorder.provider, recorder.model = body.provider, body.model
+        try:
+            turn = await persist_turn(
+                session,
+                conversation_id=convo.id,
+                turn_id=body.turn_id,
+                question=question,
+                recorder=recorder,
+            )
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            if body.turn_id and await session.get(Turn, body.turn_id) is not None:
+                from fastapi import HTTPException
+
+                raise HTTPException(
+                    status_code=409, detail="Turn already exists."
+                ) from None
+            raise
+        return convo.id, history, convo.dataset_id, turn.id
 
 
 @app.post("/api/chat", dependencies=[Depends(require_access), Depends(rate_limit)])
@@ -237,7 +252,7 @@ async def chat(body: ChatRequest) -> StreamingResponse:
     """Stream one turn, using persisted history and saving all artifacts."""
     # Validate before creating a thread so invalid datasets don't leave empty chats.
     dataset = await _resolve_dataset(body.dataset_id, _last_question(body.messages))
-    conversation_id, history, dataset_id = await _prepare_conversation(body)
+    conversation_id, history, dataset_id, turn_id = await _prepare_conversation(body)
     if dataset_id != body.dataset_id:
         dataset = await _resolve_dataset(dataset_id, _last_question(body.messages))
     config = EngineConfig(
@@ -247,7 +262,6 @@ async def chat(body: ChatRequest) -> StreamingResponse:
     )
     prefs = load_preferences()
     fallback = _build_fallback() if config.is_local else None
-    turn_id = body.turn_id or str(uuid4())
 
     async def event_source() -> AsyncIterator[bytes]:
         recorder = TurnRecorder()
@@ -303,9 +317,15 @@ async def _finalize_turn(
 ) -> str | None:
     """Best-effort persistence, including interrupted streams."""
     try:
+        from northwind_copilot.persistence.models import Turn
+
         async with get_sessionmaker()() as session:
+            reserved_turn = await session.get(Turn, turn_id)
+            if reserved_turn is None:
+                raise ValueError("Turn reservation no longer exists.")
             turn = await persist_turn(
                 session,
+                reserved_turn=reserved_turn,
                 conversation_id=conversation_id,
                 turn_id=turn_id,
                 question=question,

@@ -175,6 +175,45 @@ class TestChatPersistence:
         assert len(calls) == 1
         assert len((await local_client.get("/api/conversations")).json()) == 1
 
+    async def test_duplicate_reservation_returns_409_before_streaming(
+        self, local_client, monkeypatch
+    ):
+        from northwind_copilot.web import app as app_module
+
+        calls = []
+
+        async def fake(**kwargs):
+            calls.append(kwargs)
+            yield {"type": "final", "text": "Saved once"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(app_module, "stream_chat", fake)
+        body = {
+            "turn_id": "reserved-before-stream",
+            "provider": "openai",
+            "messages": [{"role": "user", "content": "Q"}],
+        }
+        # The first response has reserved its row but has not sent headers/events.
+        first = await app_module.chat(app_module.ChatRequest(**body))
+        assert calls == []
+        duplicate = await local_client.post("/api/chat", json=body)
+        assert duplicate.status_code == 409
+        assert duplicate.json() == {"detail": "Turn already exists."}
+        assert calls == []
+        # The failed duplicate transaction must not leave an empty conversation.
+        listing = (await local_client.get("/api/conversations")).json()
+        assert len(listing) == 1
+        assert listing[0]["turn_count"] == 1
+        async for _ in first.body_iterator:
+            pass
+        detail = (
+            await local_client.get(f"/api/conversations/{listing[0]['id']}")
+        ).json()
+        assert len(detail["turns"]) == 1
+        assert detail["turns"][0]["id"] == body["turn_id"]
+        assert detail["turns"][0]["answer"] == "Saved once"
+        assert len(calls) == 1
+
     @pytest.mark.parametrize("turn_id", ["", "a" * 37, "bad/id"])
     async def test_invalid_turn_id_is_rejected(self, local_client, turn_id):
         response = await local_client.post(

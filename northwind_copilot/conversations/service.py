@@ -107,20 +107,26 @@ async def persist_turn(
     question: str,
     recorder: TurnRecorder,
     turn_id: str | None = None,
+    reserved_turn: Turn | None = None,
 ) -> Turn:
-    """Write one recorded turn to the database."""
-    turn = Turn(
-        id=turn_id,
-        conversation_id=conversation_id,
-        question=question,
-        answer=recorder.answer,
-        queries=recorder.queries,
-        charts=recorder.charts,
-        insights=recorder.insights,
-        error=recorder.error,
-        model=recorder.model,
-        provider=recorder.provider,
+    """Create a turn or fill the row reserved before its SSE response starts."""
+    if reserved_turn is not None and (
+        reserved_turn.id != turn_id or reserved_turn.conversation_id != conversation_id
+    ):
+        raise ValueError("Turn reservation does not match the conversation.")
+    turn = (
+        reserved_turn
+        if reserved_turn is not None
+        else Turn(id=turn_id, conversation_id=conversation_id)
     )
+    turn.question = question
+    turn.answer = recorder.answer
+    turn.queries = recorder.queries
+    turn.charts = recorder.charts
+    turn.insights = recorder.insights
+    turn.error = recorder.error
+    turn.model = recorder.model
+    turn.provider = recorder.provider
     session.add(turn)
     await session.flush()
     return turn
