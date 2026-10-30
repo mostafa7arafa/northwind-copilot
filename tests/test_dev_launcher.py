@@ -14,8 +14,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import pytest
 
-def test_launcher_ignores_forwarded_peer_headers(tmp_path):
+
+def test_launcher_rejects_forwarded_remote_peer(tmp_path):
     root = Path(__file__).resolve().parents[1]
     script = (root / "dev.sh").read_text()
     match = re.search(r"uv run --no-sync uvicorn (.*?) &", script, re.DOTALL)
@@ -69,9 +71,14 @@ def test_launcher_ignores_forwarded_peer_headers(tmp_path):
                     "X-Forwarded-Proto": "https",
                 },
             )
-            # The real socket peer remains loopback; spoofed headers cannot deny
-            # or grant access by replacing that peer or the checked Host.
-            with opener.open(request, timeout=5) as response:
+            # A local proxy must not conceal a forwarded remote client.
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                opener.open(request, timeout=5)
+            assert exc.value.code == 403
+            local_request = urllib.request.Request(
+                base + "/api/datasets", headers={"X-Forwarded-For": "127.0.0.1"}
+            )
+            with opener.open(local_request, timeout=5) as response:
                 assert response.status == 200
                 assert json.load(response) == []
         finally:

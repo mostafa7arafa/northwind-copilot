@@ -24,9 +24,17 @@ def _loopback(host: str | None) -> bool:
 async def require_access(request: Request) -> None:
     """Reject remote peers, DNS rebinding, and foreign browser origins.
 
-    Forwarded headers are deliberately not trusted. This is a local application,
-    not a LAN/public service; origin-less local CLI requests remain supported.
+    Forwarded headers cannot grant access, and non-loopback forwarded addresses
+    are rejected even behind a local proxy. Origin-less local CLI requests remain
+    supported; this is not a LAN/public service.
     """
+    try:
+        allowed_forwarded = all(
+            ipaddress.ip_address(value.strip()).is_loopback
+            for value in request.headers.getlist("x-forwarded-for")
+        )
+    except ValueError:
+        allowed_forwarded = False
     origin = request.headers.get("origin")
     allowed_origin = not origin or (
         origin in settings.cors_origins_list and _loopback(urlsplit(origin).hostname)
@@ -36,6 +44,7 @@ async def require_access(request: Request) -> None:
         or not _loopback(request.client.host)
         or not _loopback(request.url.hostname)
         or not allowed_origin
+        or not allowed_forwarded
         or request.headers.get("sec-fetch-site") == "cross-site"
     ):
         raise HTTPException(status_code=403, detail="Local access only.")

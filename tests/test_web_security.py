@@ -59,6 +59,40 @@ class TestRequireAccess:
             await security.require_access(incoming)
         assert exc.value.status_code == 403
 
+    @pytest.mark.parametrize(
+        "forwarded",
+        [
+            "192.168.1.3",
+            "203.0.113.1",
+            "127.0.0.1, 192.168.1.3",
+            "unknown",
+            "",
+            "localhost",
+        ],
+    )
+    async def test_remote_or_invalid_forwarded_address_denied(self, forwarded):
+        incoming = _request(extra=[(b"x-forwarded-for", forwarded.encode())])
+        with pytest.raises(HTTPException) as exc:
+            await security.require_access(incoming)
+        assert exc.value.status_code == 403
+
+    @pytest.mark.parametrize("forwarded", ["127.0.0.1", "::1", " 127.0.0.1 "])
+    async def test_loopback_forwarded_address_allowed(self, forwarded):
+        await security.require_access(
+            _request(extra=[(b"x-forwarded-for", forwarded.encode())])
+        )
+
+    async def test_any_remote_forwarded_header_denied(self):
+        incoming = _request(
+            extra=[
+                (b"x-forwarded-for", b"127.0.0.1"),
+                (b"x-forwarded-for", b"192.168.1.3"),
+            ]
+        )
+        with pytest.raises(HTTPException) as exc:
+            await security.require_access(incoming)
+        assert exc.value.status_code == 403
+
     def test_guard_covers_product_endpoints_without_spending(self, monkeypatch):
         def unexpected():
             pytest.fail("guard must run before cloud fallback or persistence")
