@@ -40,7 +40,39 @@ dev = [
     "httpx>=0.27",
     "pytest-asyncio>=0.24",
     "vulture==2.15",
+    "ruff>=0.17.3",
+    "mypy>=2.4.1",
+    "pip-audit>=2.10.1",
+    "pandas-stubs>=3.1.0.261029",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [".langgraph_api", "eval/results"]
+
+[tool.ruff.lint]
+# Match flake8's default E/F/W rules. E203, W503 and E704 are not
+# implemented by Ruff; flake8 already excludes them for Black compatibility.
+select = ["E", "F", "W"]
+
+[tool.mypy]
+files = ["northwind_copilot"]
+python_version = "3.12"
+check_untyped_defs = true
+warn_unused_ignores = true
+
+# Preserve the protected read-only SQL adapter unchanged. Mypy cannot infer
+# url.database is non-None from the is_sqlite_file boolean (database.py:74).
+[[tool.mypy.overrides]]
+module = "northwind_copilot.infra.database"
+disable_error_code = ["arg-type"]
+
+# Preserve the eval instrument unchanged: ChatOpenAI's generated signature
+# rejects its supported max_tokens alias and coercible string api_key.
+[[tool.mypy.overrides]]
+module = "northwind_copilot.eval.multiturn.judges"
+disable_error_code = ["call-arg", "arg-type"]
 
 [tool.vulture]
 paths = ["northwind_copilot", "tests", "scripts"]

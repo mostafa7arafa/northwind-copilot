@@ -107,15 +107,16 @@ async def get_conversation(
 ) -> ConversationDetail:
     """Return a conversation, its turns, and persisted feedback votes."""
     convo = await _load_conversation(session, conversation_id)
-    votes = dict(
-        (
+    votes = {
+        turn_id: vote
+        for turn_id, vote in (
             await session.execute(
                 select(TurnFeedback.turn_id, TurnFeedback.vote)
                 .join(Turn, Turn.id == TurnFeedback.turn_id)
                 .where(Turn.conversation_id == convo.id)
             )
         ).all()
-    )
+    }
     return ConversationDetail(
         id=convo.id,
         title=convo.title,

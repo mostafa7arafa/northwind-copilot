@@ -17,11 +17,16 @@ jobs:
           version: "0.5.x"
       - name: Sync dependencies
         run: uv sync --frozen --group dev --group web
-      - name: Lint (black, isort, flake8)
+      - name: Lockfile consistency
+        run: uv lock --check
+      - name: Lint (black, isort, flake8, ruff)
         run: |
           uv run black --check northwind_copilot tests
           uv run isort --check-only northwind_copilot tests
           uv run flake8 northwind_copilot tests
+          uv run ruff check .
+      - name: Typecheck (mypy)
+        run: uv run mypy
       - name: Dead code (80%+ confidence)
         run: uv run vulture
       - name: Tests
@@ -65,4 +70,8 @@ jobs:
         with:
           version: "0.5.x"
       - name: Python dependency audit
-        run: uvx pip-audit || true  # advisory until we triage the baseline
+        # Audit the frozen application + dev + web environment, not uvx's
+        # isolated tool environment. Vulnerabilities fail the Security job.
+        run: |
+          uv sync --frozen --group dev --group web
+          uv run pip-audit
