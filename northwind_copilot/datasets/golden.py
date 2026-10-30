@@ -14,7 +14,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from northwind_copilot.tenancy.models import GoldenExample
+from northwind_copilot.persistence.models import GoldenExample
 
 # How many examples one prompt carries. More would crowd out the schema.
 TOP_K = 3

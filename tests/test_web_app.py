@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi.testclient import TestClient
 
 from northwind_copilot.web import app as app_module
 from northwind_copilot.web.app import app
 
-client = TestClient(app)
+client = TestClient(app, base_url="http://localhost:8000", client=("127.0.0.1", 12345))
 
 
 def test_health():
@@ -77,7 +75,7 @@ def test_chat_rejects_empty_messages():
     assert resp.status_code == 422
 
 
-def test_chat_streams_events(monkeypatch):
+async def test_chat_streams_events(monkeypatch, local_client):
     async def _fake_stream(**kwargs):
         yield {"type": "engine", "engine": "local"}
         yield {"type": "final", "text": "done"}
@@ -87,7 +85,7 @@ def test_chat_streams_events(monkeypatch):
     monkeypatch.setattr(app_module, "load_preferences", lambda: "")
     monkeypatch.setattr(app_module, "_build_fallback", lambda: None)
 
-    resp = client.post(
+    resp = await local_client.post(
         "/api/chat",
         json={
             "messages": [{"role": "user", "content": "hi"}],
@@ -117,32 +115,43 @@ def test_resolve_api_key_prefers_browser_key(monkeypatch):
     assert app_module._resolve_api_key("openai", "sk-browser") == "sk-browser"
 
 
-def test_resolve_api_key_refuses_server_key_on_open_deployment(monkeypatch):
-    # Anonymous open POC (not hosted, no auth token) → never spend the server's
-    # key for a caller who didn't bring their own. settings is a frozen
-    # dataclass, so replace the module-level name rather than mutating it.
-    monkeypatch.setattr(
-        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="")
-    )
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
-    assert app_module._resolve_api_key("openai", None) is None
+@pytest.mark.parametrize(
+    "provider,env_var",
+    [
+        ("openai", "OPENAI_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+    ],
+)
+def test_resolve_api_key_uses_local_environment(monkeypatch, provider, env_var):
+    monkeypatch.setenv(env_var, "sk-server")
+    assert app_module._resolve_api_key(provider, None) == "sk-server"
 
 
-def test_resolve_api_key_allows_server_key_when_gated(monkeypatch):
-    # With an auth token set, callers are trusted, so the server key may back
-    # a request that omits a browser key.
-    monkeypatch.setattr(
-        app_module, "settings", SimpleNamespace(hosted_mode=False, auth_token="tok")
-    )
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-server")
-    assert app_module._resolve_api_key("openai", None) == "sk-server"
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/api/auth/signup"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/auth/logout"),
+        ("GET", "/api/auth/me"),
+        ("GET", "/api/usage"),
+        ("GET", "/api/billing/plans"),
+        ("POST", "/api/billing/checkout"),
+        ("POST", "/api/billing/webhook"),
+        ("GET", "/api/keys"),
+        ("PUT", "/api/keys/openai"),
+    ],
+)
+def test_commercial_routes_removed(method, path):
+    assert client.request(method, path).status_code == 404
 
 
-def test_resolve_api_key_uses_server_key_in_hosted_mode(monkeypatch):
-    # Hosted mode: callers are authenticated users, so the server's metered key
-    # backs their turns even without a per-request key.
-    monkeypatch.setattr(
-        app_module, "settings", SimpleNamespace(hosted_mode=True, auth_token="")
-    )
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-server")
-    assert app_module._resolve_api_key("openrouter", None) == "sk-or-server"
+async def test_lifespan_initializes_workspace(workspace_settings):
+    from northwind_copilot.persistence import db
+
+    await db.dispose_engine()
+    async with app_module.lifespan(app):
+        assert str(db.get_engine().url) == workspace_settings.workspace_db_url
+        async with db.get_engine().connect() as conn:
+            assert not conn.closed
+    assert db._engine is None

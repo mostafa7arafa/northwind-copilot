@@ -77,7 +77,7 @@ class Settings:
         ollama_num_ctx: Context window handed to Ollama. MUST be >=
             ``max_context_tokens``: Ollama's own default is 4096 and it truncates
             an over-long prompt silently *from the head*, which drops the system
-            prompt (and, in hosted mode, the injected schema summary) with no
+            prompt (and, for uploads, the injected schema summary) with no
             error. The trim middleware is only a real guard when the window it
             trims to actually exists.
         ollama_num_predict: Hard cap on tokens generated per model call, so one
@@ -90,9 +90,6 @@ class Settings:
             accuracy (9/11 both ways, same two failures), so it is off.
         cors_allow_origins: Comma-separated list of browser origins allowed to
             call the API. Defaults to the local Next.js dev server.
-        auth_token: Optional shared bearer token. When set, every API request
-            must carry ``Authorization: Bearer <token>``; when empty, the API is
-            open (single-user local POC).
         max_messages: Cap on conversation-history length accepted per request.
         max_message_chars: Cap on the size of a single message's content.
         max_preferences_chars: Cap on stored analyst-preferences text.
@@ -129,7 +126,6 @@ class Settings:
     cors_allow_origins: str = _env(
         "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
     )
-    auth_token: str = _env("APP_AUTH_TOKEN", "")
 
     # --- Abuse / cost guards ----------------------------------------------
     max_messages: int = _env_int("MAX_MESSAGES", 40)
@@ -140,33 +136,11 @@ class Settings:
     turn_deadline_seconds_cloud: int = _env_int("TURN_DEADLINE_SECONDS_CLOUD", 300)
     query_timeout_seconds: int = _env_int("QUERY_TIMEOUT_SECONDS", 10)
 
-    # --- SaaS / multi-tenant hosting --------------------------------------
-    # When true, the service runs as the hosted product: per-user JWT auth
-    # replaces the shared bearer token, and the local Ollama engine is hidden
-    # from the model registry. When false, behaviour is the single-user POC.
-    hosted_mode: bool = _env_bool("HOSTED_MODE", False)
-    # Application database (users/orgs/datasets/billing). Defaults to a local
-    # SQLite file via the async aiosqlite driver so dev and tests need no
-    # Postgres; production sets APP_DATABASE_URL to a postgresql+asyncpg URL.
-    app_db_url: str = _env("APP_DATABASE_URL", "sqlite+aiosqlite:///data/app.sqlite")
-    # Root directory holding one read-only SQLite file per uploaded dataset,
-    # laid out as {tenant_data_dir}/{org_id}/{dataset_id}.sqlite.
-    tenant_data_dir: str = _env("TENANT_DATA_DIR", "data/tenants")
-    # Secrets. These MUST be overridden in any real deployment; the insecure
-    # defaults exist only so the app boots in local dev and tests.
-    jwt_secret: str = _env("JWT_SECRET", "dev-insecure-jwt-secret-change-me")
-    jwt_expiry_minutes: int = _env_int("JWT_EXPIRY_MINUTES", 60 * 24 * 7)
-    key_encryption_secret: str = _env("KEY_ENCRYPTION_SECRET", "")
-    # Browser origin of the frontend (used for auth cookies and OAuth redirects).
-    frontend_origin: str = _env("FRONTEND_ORIGIN", "http://localhost:3000")
-    # Google OAuth (optional; empty disables the Google sign-in button).
-    google_client_id: str = _env("GOOGLE_CLIENT_ID", "")
-    google_client_secret: str = _env("GOOGLE_CLIENT_SECRET", "")
-    # Which billing backend serves checkout/webhooks. "mock" completes
-    # purchases instantly through the same webhook pipeline a real provider
-    # would use (full lifecycle, no money); "paddle" arrives with Phase 2 as
-    # one new module implementing the same BillingProvider protocol.
-    billing_provider: str = _env("BILLING_PROVIDER", "mock")
+    # --- Local workspace --------------------------------------------------
+    workspace_db_url: str = _env(
+        "WORKSPACE_DATABASE_URL", "sqlite+aiosqlite:///data/workspace.sqlite"
+    )
+    dataset_data_dir: str = _env("DATASET_DATA_DIR", "data/datasets")
     # Dev-only escape hatch for TLS-intercepting networks (corporate proxy /
     # antivirus): skip cert verification on outbound LLM API calls. NEVER set
     # this on a real deployment — it disables HTTPS trust for provider calls.

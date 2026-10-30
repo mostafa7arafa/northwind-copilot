@@ -1,55 +1,44 @@
-"""Request-level guards for the web service: auth and rate limiting.
-
-Both are deliberately lightweight and dependency-free so a self-hosted operator
-can stand the service up on a single box without extra infrastructure:
-
-* **Auth** is an optional shared bearer token. When ``APP_AUTH_TOKEN`` is set,
-  every request must present it; when unset, the API stays open (the original
-  single-user local POC behaviour). This is a deployment boundary, not a full
-  multi-user identity system — that arrives with the tenant model.
-* **Rate limiting** is an in-memory sliding window keyed by client. It is
-  per-process, so it bounds abuse on a single-worker self-host; a multi-worker
-  or multi-node deployment should move this to a shared store (e.g. Redis).
-"""
+"""Loopback-only access and in-memory rate limiting for the personal app."""
 
 from __future__ import annotations
 
-import hmac
+import ipaddress
 import time
 from collections import defaultdict, deque
+from urllib.parse import urlsplit
 
-from fastapi import Cookie, Header, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 
 from northwind_copilot.core.config import settings
 
 
-async def require_auth(authorization: str | None = Header(default=None)) -> None:
-    """FastAPI dependency enforcing the optional shared bearer token.
+def _loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return False
 
-    Args:
-        authorization: The incoming ``Authorization`` header, if any.
 
-    Raises:
-        HTTPException: 401 when a token is configured and the header is missing
-            or does not match.
+async def require_access(request: Request) -> None:
+    """Reject remote peers, DNS rebinding, and foreign browser origins.
+
+    Forwarded headers are deliberately not trusted. This is a local application,
+    not a LAN/public service; origin-less local CLI requests remain supported.
     """
-    expected = settings.auth_token
-    if not expected:
-        return  # Open mode: no token configured.
-
-    prefix = "Bearer "
-    provided = (
-        authorization[len(prefix) :]
-        if authorization and authorization.startswith(prefix)
-        else ""
+    origin = request.headers.get("origin")
+    allowed_origin = not origin or (
+        origin in settings.cors_origins_list and _loopback(urlsplit(origin).hostname)
     )
-    # Constant-time compare so a wrong token can't be recovered by timing.
-    if not provided or not hmac.compare_digest(provided, expected):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing credentials.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if (
+        not request.client
+        or not _loopback(request.client.host)
+        or not _loopback(request.url.hostname)
+        or not allowed_origin
+        or request.headers.get("sec-fetch-site") == "cross-site"
+    ):
+        raise HTTPException(status_code=403, detail="Local access only.")
 
 
 class RateLimiter:
@@ -104,48 +93,3 @@ async def rate_limit(request: Request) -> None:
     """
     client_id = request.client.host if request.client else "unknown"
     _limiter.check(client_id)
-
-
-async def require_access(
-    nw_session: str | None = Cookie(default=None),
-    authorization: str | None = Header(default=None),
-):
-    """Mode-aware access guard for the protected API.
-
-    * **Hosted mode** (``settings.hosted_mode``): resolve the httpOnly session
-      cookie to a user and their org, returning a ``RequestContext`` the route
-      can authorise data access against.
-    * **POC mode**: fall back to the optional shared bearer token and return
-      ``None`` (there is no tenant).
-
-    Imports of the tenancy layer are deferred so the POC path never touches the
-    application database (nor creates its file).
-
-    Returns:
-        A ``RequestContext`` in hosted mode, else ``None``.
-
-    Raises:
-        HTTPException: 401 when authentication is required and fails.
-    """
-    if not settings.hosted_mode:
-        await require_auth(authorization)
-        return None
-
-    from northwind_copilot.auth.service import read_session_token
-    from northwind_copilot.tenancy.db import get_sessionmaker
-    from northwind_copilot.tenancy.deps import load_context
-    from northwind_copilot.tenancy.models import User
-
-    unauth = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
-    )
-    if not nw_session:
-        raise unauth
-    user_id = read_session_token(nw_session)
-    if not user_id:
-        raise unauth
-    async with get_sessionmaker()() as session:
-        user = await session.get(User, user_id)
-        if user is None:
-            raise unauth
-        return await load_context(session, user_id)

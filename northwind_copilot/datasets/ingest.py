@@ -1,4 +1,4 @@
-"""Convert an uploaded file into a per-tenant read-only SQLite dataset.
+"""Convert an uploaded file into a local read-only SQLite dataset.
 
 Security posture: the uploaded bytes are untrusted. Tabular files (CSV/XLSX) are
 parsed with pandas and written to a *fresh* SQLite file, so nothing executable
@@ -225,7 +225,7 @@ def append(
     """Add one more file's tables to an existing dataset SQLite.
 
     This is what makes datasets *relational across files*: each appended
-    upload becomes another table in the same per-tenant database, so the
+    upload becomes another table in the same local database, so the
     agent can join sales.csv against targets.xlsx. Table names come from the
     filename (CSV) or sheet names (XLSX) and are de-conflicted with an ``_N``
     suffix rather than replaced — appends never clobber existing data.

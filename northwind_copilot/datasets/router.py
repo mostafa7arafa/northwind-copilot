@@ -1,33 +1,28 @@
 """Dataset management API: upload, list, inspect, edit context, delete.
 
-Uploads are ingested synchronously (tier caps keep files small enough that this
-is fine without a task queue). Every route is scoped to the caller's org, so one
-tenant can never see or touch another's datasets.
+Uploads are ingested synchronously with a fixed 25MB safety ceiling.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from northwind_copilot.billing.entitlements import ensure_upload_allowed
 from northwind_copilot.core.config import settings
 from northwind_copilot.datasets import ingest as ingest_mod
 from northwind_copilot.datasets import storage
 from northwind_copilot.datasets.schema_summary import generate_summary
-from northwind_copilot.tenancy.db import get_session
-from northwind_copilot.tenancy.deps import RequestContext, current_org
-from northwind_copilot.tenancy.models import Dataset
-from northwind_copilot.web.security import rate_limit
+from northwind_copilot.persistence.db import get_session
+from northwind_copilot.persistence.models import Dataset
+from northwind_copilot.web.security import rate_limit, require_access
 
-router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+router = APIRouter(
+    prefix="/api/datasets", tags=["datasets"], dependencies=[Depends(require_access)]
+)
 
-# Hard ceiling on synchronous in-request ingestion, independent of plan tier.
-# Plan caps below this (trial 10MB) bind first; caps above it (Pro/Team) stay
-# bounded here until background ingestion ships — a 200MB+ file read into
-# memory would stall the single worker.
+# Hard ceiling on synchronous in-request ingestion to bound memory and latency.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 _EXT_TO_SOURCE = {
@@ -93,14 +88,10 @@ def _source_type(filename: str) -> str:
     return source
 
 
-async def _load_owned(
-    session: AsyncSession, dataset_id: str, ctx: RequestContext
-) -> Dataset:
-    """Fetch a dataset, enforcing that it belongs to the caller's org."""
+async def _load_dataset(session: AsyncSession, dataset_id: str) -> Dataset:
+    """Fetch a dataset from the local workspace."""
     dataset = await session.get(Dataset, dataset_id)
-    if dataset is None or dataset.org_id != ctx.org_id:
-        # Same 404 whether it doesn't exist or belongs to another tenant, so the
-        # API never confirms the existence of another org's data.
+    if dataset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
     return dataset
 
@@ -109,12 +100,11 @@ async def _load_owned(
 async def upload_dataset(
     file: UploadFile = File(...),
     name: str = Form(default=""),
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> DatasetOut:
-    """Upload a file, ingest it into a per-tenant SQLite dataset, and return it."""
+    """Upload a file, ingest it into a local SQLite dataset, and return it."""
     source_type = _source_type(file.filename or "")
-    data = await file.read()
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The file is empty."
@@ -124,19 +114,7 @@ async def upload_dataset(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the upload size limit.",
         )
-    # Plan quotas: dataset count and per-tier size cap (the hard ceiling above
-    # bounds request memory regardless of tier).
-    dataset_count = (
-        await session.execute(
-            select(func.count())
-            .select_from(Dataset)
-            .where(Dataset.org_id == ctx.org_id, Dataset.status != "failed")
-        )
-    ).scalar_one()
-    ensure_upload_allowed(ctx.plan, dataset_count=dataset_count, file_bytes=len(data))
-
     dataset = Dataset(
-        org_id=ctx.org_id,
         name=name.strip() or (file.filename or "dataset"),
         source_type=source_type,
         status="processing",
@@ -144,7 +122,7 @@ async def upload_dataset(
     session.add(dataset)
     await session.flush()  # assign dataset.id
 
-    dest = storage.dataset_path(ctx.org_id, dataset.id)
+    dest = storage.dataset_path(dataset.id)
     try:
         result = ingest_mod.ingest(source_type, data, dest)
         dataset.file_path = str(dest)
@@ -154,11 +132,9 @@ async def upload_dataset(
         dataset.schema_summary = generate_summary(dest)
         dataset.status = "ready"
     except ingest_mod.IngestError as exc:
-        storage.delete_dataset_file(ctx.org_id, dataset.id)
+        storage.delete_dataset_file(dataset.id)
         dataset.status = "failed"
         dataset.error = str(exc)
-        # Persist the failed row so the user can see why, then 400.
-        await session.flush()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
@@ -170,25 +146,24 @@ async def upload_dataset(
 async def add_file(
     dataset_id: str,
     file: UploadFile = File(...),
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> DatasetOut:
     """Add another file's tables to an existing dataset (multi-file datasets).
 
-    Each appended upload becomes more tables in the same per-tenant SQLite, so
+    Each appended upload becomes more tables in the same local SQLite, so
     questions can join across files ("match sales.csv against targets.xlsx").
     Table names are de-conflicted, never replaced.
     """
     from pathlib import Path
 
-    dataset = await _load_owned(session, dataset_id, ctx)
+    dataset = await _load_dataset(session, dataset_id)
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Dataset is not ready for more files.",
         )
     source_type = _source_type(file.filename or "")
-    data = await file.read()
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The file is empty."
@@ -198,10 +173,6 @@ async def add_file(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the upload size limit.",
         )
-    # Per-tier size cap only — adding a file doesn't consume a dataset slot,
-    # so the count check is passed a zero.
-    ensure_upload_allowed(ctx.plan, dataset_count=0, file_bytes=len(data))
-
     name_hint = (file.filename or "data").rsplit(".", 1)[0]
     path = Path(dataset.file_path)
     try:
@@ -227,7 +198,6 @@ async def add_file(
 async def run_query(
     dataset_id: str,
     body: QueryRequest,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
     _rl: None = Depends(rate_limit),
 ) -> dict:
@@ -237,7 +207,7 @@ async def run_query(
     the agent's own result execution (``response.charting.run_sql``), so an
     edited query can't do anything the agent couldn't.
     """
-    dataset = await _load_owned(session, dataset_id, ctx)
+    dataset = await _load_dataset(session, dataset_id)
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -257,16 +227,11 @@ async def run_query(
 
 @router.get("", response_model=list[DatasetOut])
 async def list_datasets(
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> list[DatasetOut]:
-    """List the caller org's datasets, newest first."""
+    """List workspace datasets, newest first."""
     rows = (
-        await session.execute(
-            select(Dataset)
-            .where(Dataset.org_id == ctx.org_id)
-            .order_by(Dataset.created_at.desc())
-        )
+        await session.execute(select(Dataset).order_by(Dataset.created_at.desc()))
     ).scalars()
     return [DatasetOut.of(d) for d in rows]
 
@@ -274,22 +239,20 @@ async def list_datasets(
 @router.get("/{dataset_id}", response_model=DatasetOut)
 async def get_dataset(
     dataset_id: str,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> DatasetOut:
     """Return one dataset (incl. its schema summary)."""
-    return DatasetOut.of(await _load_owned(session, dataset_id, ctx))
+    return DatasetOut.of(await _load_dataset(session, dataset_id))
 
 
 @router.put("/{dataset_id}/context", response_model=DatasetOut)
 async def update_context(
     dataset_id: str,
     body: ContextUpdate,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> DatasetOut:
     """Edit a dataset's business context (injected into the prompt)."""
-    dataset = await _load_owned(session, dataset_id, ctx)
+    dataset = await _load_dataset(session, dataset_id)
     dataset.business_context = body.business_context.strip()
     return DatasetOut.of(dataset)
 
@@ -297,10 +260,9 @@ async def update_context(
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dataset(
     dataset_id: str,
-    ctx: RequestContext = Depends(current_org),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a dataset row and its SQLite file."""
-    dataset = await _load_owned(session, dataset_id, ctx)
-    storage.delete_dataset_file(ctx.org_id, dataset.id)
+    dataset = await _load_dataset(session, dataset_id)
+    storage.delete_dataset_file(dataset.id)
     await session.delete(dataset)

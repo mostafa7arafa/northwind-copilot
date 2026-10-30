@@ -3,7 +3,7 @@
 ``TurnRecorder`` observes the same SSE events the client renders and accumulates
 them into a storable shape. The chat endpoint drives it as it streams and calls
 :func:`persist_turn` in a ``finally`` block, so a turn is saved even if the
-client disconnects mid-stream (which also matters for metering later).
+client disconnects mid-stream.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from northwind_copilot.tenancy.models import Conversation, Turn
+from northwind_copilot.persistence.models import Conversation, Turn
 
 
 class TurnRecorder:
@@ -66,8 +66,6 @@ class TurnRecorder:
 async def ensure_conversation(
     session: AsyncSession,
     *,
-    org_id: str,
-    user_id: str,
     dataset_id: str | None,
     conversation_id: str | None,
     title_hint: str,
@@ -76,26 +74,24 @@ async def ensure_conversation(
 
     Args:
         session: An open application-database session.
-        org_id: The caller's org.
-        user_id: The caller's user id.
         dataset_id: The dataset this conversation is about, if any.
         conversation_id: An existing conversation to append to, if provided.
         title_hint: Text (usually the first question) to title a new thread.
 
     Returns:
-        An owned, persisted :class:`Conversation`.
+        A persisted :class:`Conversation`.
 
     Raises:
-        ValueError: If ``conversation_id`` is given but not owned by the org.
+        ValueError: If the conversation is missing or its dataset conflicts.
     """
     if conversation_id:
         convo = await session.get(Conversation, conversation_id)
-        if convo is None or convo.org_id != org_id:
+        if convo is None:
             raise ValueError("conversation not found")
+        if dataset_id is not None and convo.dataset_id != dataset_id:
+            raise ValueError("conversation dataset mismatch")
         return convo
     convo = Conversation(
-        org_id=org_id,
-        user_id=user_id,
         dataset_id=dataset_id,
         title=(title_hint.strip()[:42] or "New analysis"),
     )

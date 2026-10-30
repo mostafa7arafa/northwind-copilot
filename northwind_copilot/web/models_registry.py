@@ -76,9 +76,7 @@ async def list_all_providers() -> dict:
     Returns:
         A dict keyed by provider with ``available`` flags and model lists.
     """
-    # The hosted product has no local Ollama daemon — inference is cloud-only
-    # (our metered OpenRouter key or BYOK). Don't probe or offer local there.
-    ollama = [] if settings.hosted_mode else await list_ollama_models()
+    ollama = await list_ollama_models()
     openai = {
         "provider": "openai",
         "label": "OpenAI",
@@ -92,9 +90,7 @@ async def list_all_providers() -> dict:
         "needs_key": not bool(os.getenv("OPENROUTER_API_KEY")),
         "models": CURATED_OPENROUTER,
     }
-    # The hosted product meters inference through OpenRouter (our key), so make
-    # it the default there; the POC leaves OpenAI first.
-    cloud = [openrouter, openai] if settings.hosted_mode else [openai, openrouter]
+    cloud = [openai, openrouter]
     return {
         "local": {
             "provider": "ollama",

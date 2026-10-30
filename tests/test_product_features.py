@@ -68,15 +68,6 @@ class TestIngestAppend:
         assert (tables, rows) == (2, 3)
 
 
-async def _signup(client, email):
-    resp = await client.post(
-        "/api/auth/signup",
-        json={"email": email, "password": "password123", "name": "T"},
-    )
-    assert resp.status_code == 201
-    return resp.json()
-
-
 async def _upload(client, name="sales", csv=b"region,amount\neast,10\nwest,20\n"):
     resp = await client.post(
         "/api/datasets",
@@ -88,10 +79,9 @@ async def _upload(client, name="sales", csv=b"region,amount\neast,10\nwest,20\n"
 
 
 class TestMultiFileApi:
-    async def test_add_file_joins_the_dataset(self, hosted_client, hosted_db):
-        await _signup(hosted_client, "multi@x.com")
-        ds = await _upload(hosted_client)
-        added = await hosted_client.post(
+    async def test_add_file_joins_the_dataset(self, local_client):
+        ds = await _upload(local_client)
+        added = await local_client.post(
             f"/api/datasets/{ds['id']}/files",
             files={"file": ("targets.csv", b"region,target\neast,15\n", "text/csv")},
         )
@@ -101,7 +91,7 @@ class TestMultiFileApi:
         assert "targets" in body["schema_summary"]
 
         # The two files are now joinable in one SQL statement.
-        joined = await hosted_client.post(
+        joined = await local_client.post(
             f"/api/datasets/{ds['id']}/query",
             json={
                 "sql": "SELECT d.region, d.amount, t.target "
@@ -111,37 +101,22 @@ class TestMultiFileApi:
         assert joined.status_code == 200
         assert joined.json()["rows"] == [["east", 10, 15]]
 
-    async def test_other_org_cannot_add_files(self, hosted_client, hosted_db):
-        await _signup(hosted_client, "owner-mf@x.com")
-        ds = await _upload(hosted_client)
-        hosted_client.cookies.clear()
-        await _signup(hosted_client, "intruder-mf@x.com")
-        resp = await hosted_client.post(
-            f"/api/datasets/{ds['id']}/files",
-            files={"file": ("x.csv", b"a\n1\n", "text/csv")},
-        )
-        assert resp.status_code == 404
-
-    async def test_bad_append_reports_and_keeps_dataset_ready(
-        self, hosted_client, hosted_db
-    ):
-        await _signup(hosted_client, "badappend@x.com")
-        ds = await _upload(hosted_client)
-        resp = await hosted_client.post(
+    async def test_bad_append_reports_and_keeps_dataset_ready(self, local_client):
+        ds = await _upload(local_client)
+        resp = await local_client.post(
             f"/api/datasets/{ds['id']}/files",
             files={"file": ("junk.csv", b"", "text/csv")},
         )
         assert resp.status_code == 400
-        detail = (await hosted_client.get(f"/api/datasets/{ds['id']}")).json()
+        detail = (await local_client.get(f"/api/datasets/{ds['id']}")).json()
         assert detail["status"] == "ready"
         assert detail["table_count"] == 1
 
 
 class TestQueryApi:
-    async def test_select_returns_structured_table(self, hosted_client, hosted_db):
-        await _signup(hosted_client, "sqlrun@x.com")
-        ds = await _upload(hosted_client)
-        resp = await hosted_client.post(
+    async def test_select_returns_structured_table(self, local_client):
+        ds = await _upload(local_client)
+        resp = await local_client.post(
             f"/api/datasets/{ds['id']}/query",
             json={"sql": "SELECT region, amount FROM data ORDER BY amount DESC"},
         )
@@ -149,30 +124,19 @@ class TestQueryApi:
         assert resp.json()["columns"] == ["region", "amount"]
         assert resp.json()["rows"][0] == ["west", 20]
 
-    async def test_non_select_is_rejected(self, hosted_client, hosted_db):
-        await _signup(hosted_client, "nowrite@x.com")
-        ds = await _upload(hosted_client)
+    async def test_non_select_is_rejected(self, local_client):
+        ds = await _upload(local_client)
         for sql in ("DROP TABLE data", "DELETE FROM data", "PRAGMA schema_version"):
-            resp = await hosted_client.post(
+            resp = await local_client.post(
                 f"/api/datasets/{ds['id']}/query", json={"sql": sql}
             )
             assert resp.status_code == 400, sql
         # The data is untouched.
-        ok = await hosted_client.post(
+        ok = await local_client.post(
             f"/api/datasets/{ds['id']}/query",
             json={"sql": "SELECT COUNT(*) FROM data"},
         )
         assert ok.json()["rows"] == [[2]]
-
-    async def test_other_org_cannot_query(self, hosted_client, hosted_db):
-        await _signup(hosted_client, "owner-q@x.com")
-        ds = await _upload(hosted_client)
-        hosted_client.cookies.clear()
-        await _signup(hosted_client, "intruder-q@x.com")
-        resp = await hosted_client.post(
-            f"/api/datasets/{ds['id']}/query", json={"sql": "SELECT 1"}
-        )
-        assert resp.status_code == 404
 
 
 class TestLanguageRule:
@@ -197,19 +161,14 @@ class TestLanguageRule:
 
 
 class TestGoldenSelection:
-    async def test_keyword_match_ranks_first(self, hosted_db):
+    @pytest.mark.usefixtures("workspace_db")
+    async def test_keyword_match_ranks_first(self):
         from northwind_copilot.datasets.golden import select_examples
-        from northwind_copilot.tenancy.db import get_sessionmaker
-        from northwind_copilot.tenancy.models import Dataset, GoldenExample, Org, User
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import Dataset, GoldenExample
 
         async with get_sessionmaker()() as session:
-            user = User(email="g@x.com", password_hash="x")
-            session.add(user)
-            await session.flush()
-            org = Org(name="g", owner_user_id=user.id)
-            session.add(org)
-            await session.flush()
-            ds = Dataset(org_id=org.id, name="d", source_type="csv", status="ready")
+            ds = Dataset(name="d", source_type="csv", status="ready")
             session.add(ds)
             await session.flush()
             for q, s in [
@@ -217,9 +176,7 @@ class TestGoldenSelection:
                 ("count of customers", "SELECT COUNT(DISTINCT customer) ..."),
                 ("monthly revenue trend", "SELECT month, SUM(amount) ..."),
             ]:
-                session.add(
-                    GoldenExample(dataset_id=ds.id, org_id=org.id, question=q, sql=s)
-                )
+                session.add(GoldenExample(dataset_id=ds.id, question=q, sql=s))
             await session.commit()
             examples = await select_examples(
                 session, ds.id, "what was revenue per region last year?", k=2
@@ -252,14 +209,12 @@ class TestGoldenSelection:
 
 
 class TestFeedbackApi:
-    async def _seed_turn(self, me, dataset_id=None):
-        from northwind_copilot.tenancy.db import get_sessionmaker
-        from northwind_copilot.tenancy.models import Conversation, Turn
+    async def _seed_turn(self, dataset_id=None):
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import Conversation, Turn
 
         async with get_sessionmaker()() as session:
             convo = Conversation(
-                org_id=me["org_id"],
-                user_id=me["id"],
                 dataset_id=dataset_id,
                 title="t",
             )
@@ -275,15 +230,14 @@ class TestFeedbackApi:
             await session.commit()
             return convo.id, turn.id
 
-    async def test_thumbs_up_creates_a_golden_example(self, hosted_client, hosted_db):
-        from northwind_copilot.tenancy.db import get_sessionmaker
-        from northwind_copilot.tenancy.models import GoldenExample
+    async def test_thumbs_up_creates_a_golden_example(self, local_client):
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import GoldenExample
 
-        me = await _signup(hosted_client, "fb@x.com")
-        ds = await _upload(hosted_client)
-        convo_id, turn_id = await self._seed_turn(me, dataset_id=ds["id"])
+        ds = await _upload(local_client)
+        convo_id, turn_id = await self._seed_turn(dataset_id=ds["id"])
 
-        resp = await hosted_client.post(
+        resp = await local_client.post(
             f"/api/conversations/{convo_id}/turns/{turn_id}/feedback",
             json={"vote": "up"},
         )
@@ -296,50 +250,31 @@ class TestFeedbackApi:
             assert ex.question == "revenue by region?"
             assert "SUM(amount)" in ex.sql
 
-    async def test_thumbs_down_retracts_the_example(self, hosted_client, hosted_db):
-        from northwind_copilot.tenancy.db import get_sessionmaker
-        from northwind_copilot.tenancy.models import GoldenExample
+    async def test_thumbs_down_retracts_the_example(self, local_client):
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import GoldenExample
 
-        me = await _signup(hosted_client, "fb2@x.com")
-        ds = await _upload(hosted_client)
-        convo_id, turn_id = await self._seed_turn(me, dataset_id=ds["id"])
+        ds = await _upload(local_client)
+        convo_id, turn_id = await self._seed_turn(dataset_id=ds["id"])
         url = f"/api/conversations/{convo_id}/turns/{turn_id}/feedback"
-        await hosted_client.post(url, json={"vote": "up"})
-        await hosted_client.post(url, json={"vote": "down"})
+        await local_client.post(url, json={"vote": "up"})
+        await local_client.post(url, json={"vote": "down"})
 
         async with get_sessionmaker()() as session:
             assert (await session.execute(select(GoldenExample))).first() is None
 
-    async def test_datasetless_turn_records_vote_without_example(
-        self, hosted_client, hosted_db
-    ):
-        me = await _signup(hosted_client, "fb3@x.com")
-        convo_id, turn_id = await self._seed_turn(me, dataset_id=None)
-        resp = await hosted_client.post(
+    async def test_datasetless_turn_records_vote_without_example(self, local_client):
+        convo_id, turn_id = await self._seed_turn(dataset_id=None)
+        resp = await local_client.post(
             f"/api/conversations/{convo_id}/turns/{turn_id}/feedback",
             json={"vote": "up"},
         )
         assert resp.json() == {"vote": "up", "golden_example": False}
 
-    async def test_other_org_cannot_vote(self, hosted_client, hosted_db):
-        me = await _signup(hosted_client, "fbowner@x.com")
-        convo_id, turn_id = await self._seed_turn(me)
-        hosted_client.cookies.clear()
-        await _signup(hosted_client, "fbintruder@x.com")
-        resp = await hosted_client.post(
-            f"/api/conversations/{convo_id}/turns/{turn_id}/feedback",
-            json={"vote": "up"},
-        )
-        assert resp.status_code == 404
-
 
 class TestTurnEvent:
-    async def test_chat_emits_the_turn_id_before_done(
-        self, hosted_client, hosted_db, monkeypatch
-    ):
+    async def test_chat_emits_the_turn_id_before_done(self, local_client, monkeypatch):
         from northwind_copilot.web import app as app_module
-
-        await _signup(hosted_client, "turnid@x.com")
 
         async def fake(**kwargs):
             yield {"type": "final", "text": "42."}
@@ -347,7 +282,7 @@ class TestTurnEvent:
 
         monkeypatch.setattr(app_module, "stream_chat", fake)
         monkeypatch.setattr(app_module, "load_preferences", lambda: "")
-        resp = await hosted_client.post(
+        resp = await local_client.post(
             "/api/chat",
             json={
                 "messages": [{"role": "user", "content": "hi"}],
@@ -358,3 +293,50 @@ class TestTurnEvent:
         body = resp.text
         assert '"type": "turn"' in body
         assert body.index('"type": "turn"') < body.index('"type": "done"')
+
+
+class TestFeedbackIntegrity:
+    async def test_revote_is_idempotent_and_turn_must_belong_to_thread(
+        self, local_client
+    ):
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import (
+            Conversation,
+            GoldenExample,
+            Turn,
+            TurnFeedback,
+        )
+
+        ds = await _upload(local_client)
+        async with get_sessionmaker()() as session:
+            first = Conversation(dataset_id=ds["id"])
+            other = Conversation()
+            session.add_all([first, other])
+            await session.flush()
+            turn = Turn(
+                conversation_id=first.id,
+                question="total?",
+                queries=[{"sql": "SELECT 1"}],
+            )
+            session.add(turn)
+            await session.commit()
+            convo_id, other_id, turn_id = first.id, other.id, turn.id
+        url = f"/api/conversations/{convo_id}/turns/{turn_id}/feedback"
+        assert (await local_client.post(url, json={"vote": "up"})).status_code == 200
+        assert (await local_client.post(url, json={"vote": "up"})).status_code == 200
+        async with get_sessionmaker()() as session:
+            assert len((await session.scalars(select(GoldenExample))).all()) == 1
+            assert (await session.get(TurnFeedback, turn_id)).vote == 1
+        mismatch = f"/api/conversations/{other_id}/turns/{turn_id}/feedback"
+        assert (
+            await local_client.post(mismatch, json={"vote": "up"})
+        ).status_code == 404
+        assert (
+            await local_client.post(url, json={"vote": "invalid"})
+        ).status_code == 422
+        assert (
+            await local_client.delete(f"/api/conversations/{convo_id}")
+        ).status_code == 204
+        async with get_sessionmaker()() as session:
+            assert await session.get(Turn, turn_id) is None
+            assert await session.get(TurnFeedback, turn_id) is None

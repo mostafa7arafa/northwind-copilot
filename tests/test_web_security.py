@@ -1,46 +1,81 @@
-"""Tests for the web-service request guards: auth token and rate limiting."""
+"""Loopback, origin, DNS-rebinding, and rate-limit guards."""
 
 from __future__ import annotations
 
-import asyncio
-from types import SimpleNamespace
-
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from fastapi.testclient import TestClient
 
 from northwind_copilot.web import security
+from northwind_copilot.web.app import app
 
 
-def _with_token(monkeypatch, token: str) -> None:
-    """Swap the security module's settings for one with the given auth token.
+def _request(peer="127.0.0.1", host="localhost:8000", origin=None, extra=()):
+    headers = [(b"host", host.encode()), *extra]
+    if origin is not None:
+        headers.append((b"origin", origin.encode()))
+    return Request(
+        {
+            "type": "http",
+            "scheme": "http",
+            "path": "/api/chat",
+            "headers": headers,
+            "client": (peer, 12345),
+            "server": ("localhost", 8000),
+            "query_string": b"",
+        }
+    )
 
-    ``settings`` is a frozen dataclass, so we replace the module-level name
-    rather than mutating the instance.
-    """
-    monkeypatch.setattr(security, "settings", SimpleNamespace(auth_token=token))
 
+class TestRequireAccess:
+    @pytest.mark.parametrize(
+        "peer,host",
+        [
+            ("127.0.0.1", "localhost:8000"),
+            ("::1", "[::1]:8000"),
+            ("127.0.0.1", "127.0.0.1:8000"),
+        ],
+    )
+    async def test_local_cli_allowed(self, peer, host):
+        await security.require_access(_request(peer, host))
 
-class TestRequireAuth:
-    def test_open_when_no_token_configured(self, monkeypatch):
-        _with_token(monkeypatch, "")
-        # No exception == allowed.
-        asyncio.run(security.require_auth(authorization=None))
+    async def test_local_browser_allowed(self):
+        await security.require_access(_request(origin="http://localhost:3000"))
 
-    def test_rejects_missing_header_when_token_set(self, monkeypatch):
-        _with_token(monkeypatch, "secret")
+    @pytest.mark.parametrize(
+        "incoming",
+        [
+            _request(peer="192.168.1.3"),
+            _request(host="attacker.example"),
+            _request(origin="https://attacker.example"),
+            _request(origin="null"),
+            _request(origin="http://localhost:9999"),
+            _request(extra=[(b"sec-fetch-site", b"cross-site")]),
+            _request(peer="192.168.1.3", extra=[(b"x-forwarded-for", b"127.0.0.1")]),
+        ],
+    )
+    async def test_untrusted_requests_denied(self, incoming):
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(security.require_auth(authorization=None))
-        assert exc.value.status_code == 401
+            await security.require_access(incoming)
+        assert exc.value.status_code == 403
 
-    def test_rejects_wrong_token(self, monkeypatch):
-        _with_token(monkeypatch, "secret")
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(security.require_auth(authorization="Bearer nope"))
-        assert exc.value.status_code == 401
+    def test_guard_covers_product_endpoints_without_spending(self, monkeypatch):
+        def unexpected():
+            pytest.fail("guard must run before cloud fallback or persistence")
 
-    def test_accepts_correct_token(self, monkeypatch):
-        _with_token(monkeypatch, "secret")
-        asyncio.run(security.require_auth(authorization="Bearer secret"))
+        from northwind_copilot.web import app as app_module
+
+        monkeypatch.setattr(app_module, "_build_fallback", unexpected)
+        client = TestClient(app, base_url="http://localhost", client=("192.168.1.3", 1))
+        for method, path, body in [
+            ("GET", "/api/models", None),
+            ("GET", "/api/preferences", None),
+            ("GET", "/api/datasets", None),
+            ("GET", "/api/conversations", None),
+            ("POST", "/api/chat", {"messages": [{"role": "user", "content": "hi"}]}),
+        ]:
+            assert client.request(method, path, json=body).status_code == 403
+        assert client.get("/api/health").status_code == 200
 
 
 class TestRateLimiter:
