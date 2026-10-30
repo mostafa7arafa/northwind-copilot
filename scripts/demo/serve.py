@@ -27,9 +27,10 @@ def main():
             }
         )
     )
+    workspace_db = WORK / "workspace.sqlite"
     os.environ.update(
         {
-            "WORKSPACE_DATABASE_URL": f"sqlite+aiosqlite:///{WORK / 'workspace.sqlite'}",
+            "WORKSPACE_DATABASE_URL": f"sqlite+aiosqlite:///{workspace_db}",
             "DATASET_DATA_DIR": str(WORK / "datasets"),
             "LANGSMITH_API_KEY": "",
             "LANGCHAIN_API_KEY": "",
