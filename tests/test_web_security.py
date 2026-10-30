@@ -93,6 +93,17 @@ class TestRequireAccess:
             await security.require_access(incoming)
         assert exc.value.status_code == 403
 
+    async def test_duplicate_loopback_forwarded_headers_denied(self):
+        incoming = _request(
+            extra=[
+                (b"x-forwarded-for", b"127.0.0.1"),
+                (b"x-forwarded-for", b"127.0.0.1"),
+            ]
+        )
+        with pytest.raises(HTTPException) as exc:
+            await security.require_access(incoming)
+        assert exc.value.status_code == 403
+
     def test_guard_covers_product_endpoints_without_spending(self, monkeypatch):
         def unexpected():
             pytest.fail("guard must run before cloud fallback or persistence")

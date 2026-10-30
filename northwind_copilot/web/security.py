@@ -28,10 +28,10 @@ async def require_access(request: Request) -> None:
     are rejected even behind a local proxy. Origin-less local CLI requests remain
     supported; this is not a LAN/public service.
     """
+    forwarded = request.headers.getlist("x-forwarded-for")
     try:
-        allowed_forwarded = all(
-            ipaddress.ip_address(value.strip()).is_loopback
-            for value in request.headers.getlist("x-forwarded-for")
+        allowed_forwarded = len(forwarded) <= 1 and all(
+            ipaddress.ip_address(value.strip()).is_loopback for value in forwarded
         )
     except ValueError:
         allowed_forwarded = False
