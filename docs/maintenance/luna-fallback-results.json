@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-10-30T18:42:44.288621+00:00",
+  "dataset_sha256": "c5add5180317ef0f9a7957630ada5f1c31a7a35954180675f43c437a599d83fc",
+  "database_sha256": "de44ede8a51bd9d22a2a10f55fdc83365cf082a7be03379617be41d553d4b98a",
+  "base": "ef95205",
+  "measurement_harness": "a19eea1",
+  "metering_hardening": "9392e2d (abort-path fix; no measured invocation aborted)",
+  "repetitions": 3,
+  "summary": {
+    "gpt-4.1-mini": {
+      "questions": 54,
+      "passed": 47,
+      "accuracy": 0.8703703703703703,
+      "p50_latency_s": 5.780271274999905,
+      "p95_latency_s": 11.081842290750227,
+      "mean_inference_cost_usd": 0.0019495777777777778,
+      "tool_attempts": 208,
+      "tool_failures": 0,
+      "invocation_errors": 0,
+      "model_errors": 0
+    },
+    "gpt-6-luna": {
+      "questions": 54,
+      "passed": 54,
+      "accuracy": 1,
+      "p50_latency_s": 11.016924734500208,
+      "p95_latency_s": 13.70865669594982,
+      "mean_inference_cost_usd": 0.0005284525925925926,
+      "tool_attempts": 232,
+      "tool_failures": 0,
+      "invocation_errors": 0,
+      "model_errors": 0
+    }
+  },
+  "repetition_order": [
+    1,
+    2,
+    3
+  ],
+  "per_question_pass_by_repetition": [
+    {"id": "rag_policy_beverages_return_days", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hybrid_top_category_qty_summer_2017", "gpt-4.1-mini": [false, false, false], "gpt-6-luna": [true, true, true]},
+    {"id": "hybrid_aov_winter_2017", "gpt-4.1-mini": [false, false, false], "gpt-6-luna": [true, true, true]},
+    {"id": "sql_top3_products_by_revenue_alltime", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hybrid_revenue_beverages_summer_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hybrid_best_customer_margin_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "rag_catalog_categories", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "sql_employee_count_usa", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hybrid_condiments_revenue_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "sql_top_freight_order", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_top_employee_beverages_rev_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_reports_to_andrew_fuller", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_winter_focus_category_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_pct_top3_products_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_aov_beverage_orders_summer_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_best_revenue_month_2017", "gpt-4.1-mini": [true, false, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_discontinued_in_stock", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]},
+    {"id": "hard_avg_freight_per_order_2017", "gpt-4.1-mini": [true, true, true], "gpt-6-luna": [true, true, true]}
+  ]
+}
