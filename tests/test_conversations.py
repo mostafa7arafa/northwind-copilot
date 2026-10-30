@@ -137,6 +137,55 @@ class TestConversationsApi:
 
 
 class TestChatPersistence:
+    async def test_persist_turn_bumps_conversation_recency(self, local_client):
+        from datetime import datetime, timezone
+
+        from northwind_copilot.conversations.service import persist_turn
+        from northwind_copilot.persistence.db import get_sessionmaker
+        from northwind_copilot.persistence.models import Conversation, Turn
+
+        old_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        async with get_sessionmaker()() as session:
+            old = Conversation(title="Old", updated_at=old_date)
+            newer = Conversation(
+                title="Newer", updated_at=datetime(2001, 1, 1, tzinfo=timezone.utc)
+            )
+            session.add_all([old, newer])
+            await session.commit()
+            old_id, newer_id = old.id, newer.id
+        assert (await local_client.get("/api/conversations")).json()[0][
+            "id"
+        ] == newer_id
+
+        async with get_sessionmaker()() as session:
+            turn = await persist_turn(
+                session, conversation_id=old_id, question="Q", recorder=TurnRecorder()
+            )
+            await session.commit()
+            turn_id = turn.id
+        assert (await local_client.get("/api/conversations")).json()[0]["id"] == old_id
+
+        async with get_sessionmaker()() as session:
+            old = await session.get(Conversation, old_id)
+            old.updated_at = old_date
+            await session.commit()
+        # Filling the reserved row must bump recency too, not only inserting it.
+        async with get_sessionmaker()() as session:
+            recorder = TurnRecorder()
+            recorder.answer = "Completed"
+            await persist_turn(
+                session,
+                conversation_id=old_id,
+                question="Q",
+                recorder=recorder,
+                turn_id=turn_id,
+                reserved_turn=await session.get(Turn, turn_id),
+            )
+            await session.commit()
+        assert (await local_client.get("/api/conversations")).json()[0]["id"] == old_id
+        detail = (await local_client.get(f"/api/conversations/{old_id}")).json()
+        assert detail["turns"][0]["answer"] == "Completed"
+
     async def test_stable_turn_id_and_duplicate_rejection(
         self, local_client, monkeypatch
     ):

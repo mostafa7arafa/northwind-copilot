@@ -8,8 +8,10 @@ client disconnects mid-stream.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from northwind_copilot.persistence.models import Conversation, Turn
@@ -129,4 +131,9 @@ async def persist_turn(
     turn.provider = recorder.provider
     session.add(turn)
     await session.flush()
+    await session.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation_id)
+        .values(updated_at=datetime.now(timezone.utc))
+    )
     return turn
