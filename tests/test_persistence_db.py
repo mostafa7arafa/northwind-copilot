@@ -66,6 +66,18 @@ async def test_fresh_workspace_has_only_product_tables_and_reopens(workspace_db)
     assert Path(workspace_db.workspace_db_url.split("///", 1)[1]).is_file()
 
 
+async def test_every_connection_enables_wal_and_busy_timeout(workspace_db):
+    async with db.get_engine().connect() as first, db.get_engine().connect() as second:
+        for conn in (first, second):
+            assert (
+                await conn.exec_driver_sql("PRAGMA journal_mode")
+            ).scalar_one() == "wal"
+            assert (
+                await conn.exec_driver_sql("PRAGMA busy_timeout")
+            ).scalar_one() == 5000
+            assert (await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar_one() == 1
+
+
 @pytest.mark.parametrize("legacy_name", ["app.sqlite", "tenants/old.sqlite"])
 async def test_legacy_paths_rejected_without_opening(
     workspace_settings, monkeypatch, tmp_path, legacy_name

@@ -64,8 +64,14 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(settings.workspace_db_url)
 
         @event.listens_for(_engine.sync_engine, "connect")
-        def enable_foreign_keys(connection, _record):
-            connection.execute("PRAGMA foreign_keys=ON")
+        def configure_connection(connection, _record):
+            cursor = connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+            finally:
+                cursor.close()
 
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
