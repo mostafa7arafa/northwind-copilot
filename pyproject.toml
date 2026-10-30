@@ -32,8 +32,6 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "black>=24.0",
-    "isort>=5.13",
-    "flake8>=7.0",
     # Pulled into dev so the web layer (northwind_copilot.web) is importable in
     # tests; the same packages ship in the `web` group for running the service.
     "fastapi>=0.110",
@@ -52,9 +50,11 @@ target-version = "py312"
 extend-exclude = [".langgraph_api", "eval/results"]
 
 [tool.ruff.lint]
-# Match flake8's default E/F/W rules. E203, W503 and E704 are not
-# implemented by Ruff; flake8 already excludes them for Black compatibility.
-select = ["E", "F", "W"]
+select = ["E", "F", "W", "I"]
+
+# Ruff's import sorting defaults use Black-compatible wrapping and trailing commas.
+[tool.ruff.lint.isort]
+known-first-party = ["northwind_copilot"]
 
 [tool.mypy]
 files = ["northwind_copilot"]
@@ -69,10 +69,6 @@ min_confidence = 80
 [tool.black]
 line-length = 88
 target-version = ["py312"]
-
-[tool.isort]
-profile = "black"
-line_length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

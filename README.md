@@ -451,7 +451,7 @@ uv run vulture
 uv run vulture --min-confidence 0
 
 # Lint gate (run before shipping)
-uv run isort . && uv run black . && uv run flake8 northwind_copilot tests
+uv run ruff check . --fix && uv run black . && uv run mypy
 ```
 
 The tests use fakes for external services so the suite never touches Ollama,

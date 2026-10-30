@@ -34,6 +34,7 @@ from functools import lru_cache
 from langchain_openai import ChatOpenAI
 from openevals.llm import create_llm_as_judge
 from openevals.prompts import CORRECTNESS_PROMPT
+from pydantic import SecretStr
 
 JUDGE_MODEL = "qwen/qwen3-30b-a3b-instruct-2507"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -188,9 +189,9 @@ def judge_model(temperature: float = 0.0) -> ChatOpenAI:
     return ChatOpenAI(
         model=JUDGE_MODEL,
         base_url=OPENROUTER_BASE_URL,
-        api_key=key,
+        api_key=SecretStr(key),
         temperature=temperature,
-        max_tokens=JUDGE_MAX_TOKENS,
+        max_completion_tokens=JUDGE_MAX_TOKENS,
         # A stalled provider must not hang a 23-scenario run.
         timeout=60,
         max_retries=2,

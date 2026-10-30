@@ -20,14 +20,12 @@ jobs:
         run: uv sync --frozen --group dev --group web
       - name: Lockfile consistency
         run: uv lock --check
-      - name: Lint (black, isort, flake8, ruff)
+      - name: Lint (black, ruff)
         run: |
-          uv run black --check northwind_copilot tests
-          uv run isort --check-only northwind_copilot tests
-          uv run flake8 northwind_copilot tests
+          uv run black --check .
           uv run ruff check .
       - name: Typecheck (mypy)
-        run: uv run python scripts/check_types.py
+        run: uv run mypy
       - name: Dead code (80%+ confidence)
         run: uv run vulture
       - name: Tests
