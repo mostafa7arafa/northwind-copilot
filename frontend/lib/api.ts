@@ -153,6 +153,7 @@ export async function savePreferences(preferences: string): Promise<string> {
 export interface ChatArgs {
   messages: { role: string; content: string }[];
   sessionId: string;
+  turnId: string;
   provider: Provider;
   model: string;
   apiKey?: string;
@@ -174,6 +175,7 @@ export async function streamChat(args: ChatArgs): Promise<void> {
     body: JSON.stringify({
       messages: args.messages,
       session_id: args.sessionId,
+      turn_id: args.turnId,
       provider: args.provider,
       model: args.model,
       api_key: args.apiKey || null,

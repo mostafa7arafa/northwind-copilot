@@ -87,6 +87,8 @@ export interface Turn {
   /** The server-persisted turn id (from the `turn` SSE event);
    * required to attach feedback. */
   serverTurnId?: string;
+  /** History retained from a browser-only or detached legacy conversation. */
+  browserOnly?: boolean;
   /** The user's thumbs vote on this turn, if any. */
   feedback?: "up" | "down";
 }
@@ -147,6 +149,8 @@ export interface SavedTurn {
   error: Turn["error"] | null;
   model: string;
   provider: Provider;
+  /** Absent on older servers; null explicitly means unrated. */
+  feedback?: "up" | "down" | null;
 }
 
 export interface ConversationDetail extends ConversationMeta {

@@ -144,6 +144,8 @@ test("store: sample and uploaded chats retain streamed artifacts, IDs, and per-s
     count += 1;
     assert.equal(request.body.dataset_id, count === 1 ? null : "upload");
     assert.equal(request.body.conversation_id, null);
+    const current = env.store.getState();
+    assert.equal(request.body.turn_id, current.sessions.find((s) => s.id === current.currentId).turns.at(-1).id);
     return sse(
       { type: "conversation", id: `conversation-${count}` },
       { type: "engine", engine: "local", provider: "ollama", model: "llama3.2" },
@@ -180,8 +182,12 @@ test("store: stale conversation detail and chat 404 recover without clearing bro
   assert.equal(env.store.getState().sessions[0].turns[0].answer, "Original answer");
   env.store.setState({ sessions: [{ ...env.store.getState().sessions[0], conversationId: "deleted" }] });
   let attempts = 0;
+  let retryTurnId;
   env.respond((request) => {
     attempts += 1;
+    assert.equal(request.body.turn_id, env.store.getState().sessions[0].turns.at(-1).id);
+    if (retryTurnId) assert.equal(request.body.turn_id, retryTurnId);
+    retryTurnId = request.body.turn_id;
     if (attempts === 1) {
       assert.equal(request.body.conversation_id, "deleted");
       return json({ detail: "Not found" }, 404);
@@ -305,4 +311,126 @@ test("store: a late stream cannot change the data source of a newly selected ses
   assert.equal(state.sessions.find((s) => s.id === sampleId).datasetId, null);
   assert.equal(state.sessions.find((s) => s.id === sampleId).conversationId, "sample-saved");
   assert.equal(state.sessions.find((s) => s.id === uploadId).conversationId, undefined);
+});
+
+test("store: disconnect/reload reconciles stable turn IDs in server order, including delayed saves", async () => {
+  const env = setup({ sessions: [{ ...legacySession, conversationId: "deleted" }], currentId: legacySession.id });
+  env.respond(() => json({ detail: "Not found" }, 404));
+  await env.store.getState().selectSession(legacySession.id);
+  const persistedTurns = [];
+  let count = 0;
+  env.respond((request) => {
+    count += 1;
+    persistedTurns.push({ ...detail.turns[0], id: request.body.turn_id, question: `Q${count}`, answer: `A${count}` });
+    if (count === 1) return sse(
+      { type: "conversation", id: "recovered" },
+      { type: "final", text: "A1" },
+      { type: "turn", id: request.body.turn_id }
+    );
+    // The answer reached the browser, but persistence's final turn event did not.
+    let sent = false;
+    return new Response(new ReadableStream({
+      pull(controller) {
+        if (sent) return controller.error(new Error("Disconnected before turn event"));
+        sent = true;
+        controller.enqueue(new TextEncoder().encode('data: {"type":"final","text":"A2"}\n\n'));
+      },
+    }));
+  });
+  await env.store.getState().ask("Q1");
+  await env.store.getState().ask("Q2");
+  const beforeReload = env.store.getState().sessions[0];
+  const q2 = beforeReload.turns.at(-1);
+  assert.equal(q2.id, persistedTurns[1].id);
+  assert.equal(q2.serverTurnId, undefined);
+  assert.match(q2.error.message, /interrupted/);
+  // Feedback must wait for the persistence event, not just the client ID.
+  const requestCount = env.requests.length;
+  await env.store.getState().sendFeedback(q2.id, "up");
+  assert.equal(env.requests.length, requestCount);
+
+  const reloaded = setup(JSON.parse(env.storage.get("trading-desk")).state);
+  let serverTurns = persistedTurns.slice(0, 1);
+  reloaded.respond(() => json({ ...detail, id: "recovered", turns: serverTurns }));
+  await reloaded.store.getState().selectSession(legacySession.id);
+  assert.deepEqual(reloaded.store.getState().sessions[0].turns.map((t) => t.question), ["Original question", "Q1", "Q2"]);
+  // A later detail response includes the server's completed Q2. No second copy.
+  serverTurns = persistedTurns;
+  await reloaded.store.getState().selectSession(legacySession.id);
+  const restored = reloaded.store.getState().sessions[0].turns;
+  assert.deepEqual(restored.map((t) => t.question), ["Original question", "Q1", "Q2"]);
+  assert.equal(restored[0].browserOnly, true);
+  assert.equal(restored[2].id, q2.id);
+  assert.equal(restored[2].serverTurnId, q2.id);
+  assert.equal(restored[2].browserOnly, undefined);
+  assert.equal(restored[2].error, undefined);
+  assert.equal(restored[2].running, false);
+  assert.equal(reloaded.storage.get("unrelated"), "keep me");
+});
+
+test("store: saved history follows server order rather than cached order and matches either turn ID", async () => {
+  const env = setup({
+    sessions: [{ ...legacySession, conversationId: "saved", turns: [
+      { ...legacySession.turns[0], id: "q2", question: "Q2" },
+      { ...legacySession.turns[0], id: "local-q1", serverTurnId: "q1", question: "Q1" },
+    ] }], currentId: legacySession.id,
+  });
+  env.respond(() => json({ ...detail, turns: [
+    { ...detail.turns[0], id: "q1", question: "Q1" },
+    { ...detail.turns[0], id: "q2", question: "Q2" },
+  ] }));
+  await env.store.getState().selectSession(legacySession.id);
+  assert.deepEqual(env.store.getState().sessions[0].turns.map((t) => t.id), ["local-q1", "q2"]);
+});
+
+test("store: pending startup list cannot detach a conversation learned by a new analysis", async () => {
+  const env = setup();
+  let finishList;
+  env.respond((request) => request.url === "/api/conversations"
+    ? new Promise((resolve) => { finishList = resolve; }) : startup(request));
+  const initializing = env.store.getState().init();
+  env.store.getState().createSession();
+  const id = env.store.getState().currentId;
+  let turnId;
+  env.respond((request) => {
+    assert.equal(request.url, "/api/chat");
+    turnId = request.body.turn_id;
+    return sse({ type: "conversation", id: "new-saved" }, { type: "turn", id: turnId });
+  });
+  await env.store.getState().ask("First question");
+  env.respond((request) => {
+    assert.equal(request.url, "/api/conversations/new-saved");
+    return json({ ...detail, id: "new-saved", turns: [{ ...detail.turns[0], id: turnId }] });
+  });
+  finishList(json([]));
+  await initializing;
+  assert.equal(env.store.getState().sessions.find((s) => s.id === id).conversationId, "new-saved");
+  env.respond((request) => {
+    assert.equal(request.url, "/api/chat");
+    assert.equal(request.body.conversation_id, "new-saved");
+    return sse({ type: "turn", id: request.body.turn_id });
+  });
+  await env.store.getState().ask("Next question");
+  assert.equal(env.store.getState().sessions.find((s) => s.id === id).conversationId, "new-saved");
+});
+
+test("store: saved feedback restores on a fresh cache and server null clears a cached vote", async () => {
+  const env = setup();
+  let feedback = "up";
+  env.respond((request) => request.url === "/api/conversations/saved"
+    ? json({ ...detail, turns: [{ ...detail.turns[0], feedback }] }) : startup(request, [saved]));
+  await env.store.getState().init();
+  await env.store.getState().selectSession("saved");
+  const restoredFeedback = () => env.store.getState().sessions.find((s) => s.id === "saved").turns[0].feedback;
+  assert.equal(restoredFeedback(), "up");
+  feedback = "down";
+  await env.store.getState().selectSession("saved");
+  assert.equal(restoredFeedback(), "down");
+  // Older server responses lacking feedback retain compatible browser votes.
+  feedback = undefined;
+  await env.store.getState().selectSession("saved");
+  assert.equal(restoredFeedback(), "down");
+  feedback = null;
+  await env.store.getState().selectSession("saved");
+  assert.equal(restoredFeedback(), undefined);
 });

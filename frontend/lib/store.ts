@@ -82,6 +82,16 @@ function turnMemory(t: Turn, engine: Engine): string {
   return parts.join("\n\n");
 }
 
+function detachConversation(session: Session, pendingTurnId?: string): Session {
+  return {
+    ...session,
+    conversationId: undefined,
+    turnCount: undefined,
+    turns: session.turns.map((turn) => turn.id === pendingTurnId
+      ? turn : { ...turn, browserOnly: true }),
+  };
+}
+
 function restoreTurn(saved: SavedTurn, cached?: Turn): Turn {
   return {
     id: cached?.id ?? saved.id,
@@ -98,7 +108,7 @@ function restoreTurn(saved: SavedTurn, cached?: Turn): Turn {
     stages: Object.fromEntries(STAGES.map((stage) => [stage, "done"])) as Turn["stages"],
     running: false,
     collapsed: cached?.collapsed ?? false,
-    feedback: cached?.feedback,
+    feedback: saved.feedback === undefined ? cached?.feedback : saved.feedback ?? undefined,
   };
 }
 
@@ -213,6 +223,7 @@ export const useStore = create<State>()(
           (async () => {
             set({ historyLoading: true, historyError: "" });
             try {
+              const listedIds = new Set(get().sessions.map((s) => s.conversationId).filter(Boolean));
               const conversations = await conversationsApi.list();
               // Validate cached data sources before selecting a legacy session.
               await datasetsReady.catch(() => {});
@@ -233,7 +244,8 @@ export const useStore = create<State>()(
               // Retain browser-only history, including stale hosted sessions,
               // but detach IDs the personal server does not recognize.
               const local = existing.filter((s) => !saved.some((c) => c.id === s.id))
-                .map((s) => ({ ...s, conversationId: undefined, turnCount: undefined }));
+                .map((s) => s.conversationId && listedIds.has(s.conversationId)
+                  ? detachConversation(s) : s);
               set({ sessions: [...saved, ...local] });
               await get().selectSession(get().currentId);
             } catch {
@@ -312,14 +324,18 @@ export const useStore = create<State>()(
               if (s.id !== id || s.turns.some((t) => t.running)) return s;
               // A recovered legacy session can contain browser-only turns.
               // Restoring its new server history must not discard those.
-              const browserOnly = s.turns.filter((t) =>
-                !detail.turns.some((saved) => saved.id === t.serverTurnId)
+              const matches = (cached: Turn, saved: SavedTurn) =>
+                cached.id === saved.id || cached.serverTurnId === saved.id;
+              const unmatched = s.turns.filter((t) =>
+                !detail.turns.some((saved) => matches(t, saved))
               );
               const turns = [
-                ...browserOnly,
+                ...unmatched.filter((t) => t.browserOnly),
                 ...detail.turns.map((t) => restoreTurn(t,
-                  s.turns.find((cached) => cached.serverTurnId === t.id)
+                  s.turns.find((cached) => matches(cached, t))
                 )),
+                // An interrupted request may still be saving on the server.
+                ...unmatched.filter((t) => !t.browserOnly),
               ];
               return {
                 ...s,
@@ -335,7 +351,7 @@ export const useStore = create<State>()(
           if (err instanceof ApiError && err.status === 404) {
             set({
               sessions: get().sessions.map((s) => s.id === id
-                ? { ...s, conversationId: undefined, turnCount: undefined } : s),
+                ? detachConversation(s) : s),
             });
           } else if (get().currentId === id) {
             set({ historyError: "Couldn't load this saved analysis. Try selecting it again." });
@@ -478,6 +494,7 @@ export const useStore = create<State>()(
           await streamChat({
             messages: history,
             sessionId: currentId,
+            turnId: turn.id,
             provider,
             model,
             apiKey,
@@ -562,7 +579,8 @@ export const useStore = create<State>()(
           } catch (err) {
             // A deleted/stale conversation should not strand browser history.
             if (!(err instanceof ApiError && err.status === 404 && source.conversationId)) throw err;
-            set({ sessions: get().sessions.map((s) => s.id === currentId ? { ...s, conversationId: undefined } : s) });
+            set({ sessions: get().sessions.map((s) => s.id === currentId
+              ? detachConversation(s, turn.id) : s) });
             await request("");
           }
         } catch (err) {
@@ -630,7 +648,11 @@ export const useStore = create<State>()(
             ...session,
             datasetId: session.datasetId !== undefined ? session.datasetId
               : session.id === data?.currentId ? data.activeDatasetId ?? null : undefined,
-            turns: session.turns.map((turn) => ({ ...turn, running: false })),
+            turns: session.turns.map((turn) => ({
+              ...turn,
+              browserOnly: turn.browserOnly || !session.conversationId,
+              running: false,
+            })),
           })),
         };
       },
