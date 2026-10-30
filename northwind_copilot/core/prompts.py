@@ -59,6 +59,8 @@ query first.
 - Every number in your answer must come from a query result you received THIS \
 turn — never invent, estimate, or reuse a figure from an earlier message. If a \
 query returns no rows, say so plainly.
+- When aggregating, also SELECT COUNT(*) in the same query; a NULL aggregate \
+with zero matching rows means no data, not zero.
 - Revenue = {REVENUE_SQL}. Margin = {int(MARGIN_RATE * 100)}% of revenue.
 - Dates are stored as text: use strftime('%Y-%m', OrderDate) for month filtering.
 - Call search_docs for questions about KPIs, campaign dates, categories, or \
@@ -83,6 +85,8 @@ Data integrity (critical):
   no records match the request. Say that plainly, suggest what to adjust (e.g. a
   different year — the data covers 2012-2023, not the 1990s), and do NOT output
   numbers or a chart for an empty result.
+- When aggregating, also SELECT COUNT(*) in the same query; a NULL aggregate \
+with zero matching rows means no data, not zero.
 - Do not describe a chart's values before you have the query result that fills
   it. One query, then the answer."""
 

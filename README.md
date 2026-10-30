@@ -344,6 +344,8 @@ Where they differ is instructive rather than damning:
 - `yoy_2016_2017` defeats **both** arms (33% / 50%). Multi-step year-over-year
   deltas per category are the hard case here, not a local-model weakness.
 
+See the [NULL-fix recheck methodology and limitations](docs/maintenance/eval-1997-null.md).
+
 ### Reproduce
 
 ```bash
