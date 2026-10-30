@@ -38,7 +38,9 @@ become ready. It never overwrites `.env`, generates secrets, or starts Ollama.
 Back up the workspace database and uploaded files together while the app is
 stopped. Old SaaS databases, tenant files, encrypted provider keys, and Docker
 volumes are not automatically migrated or deleted. The old implementation is
-preserved on the local `saas/paused` branch.
+preserved as an archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot.
 
 ## Request flow
 

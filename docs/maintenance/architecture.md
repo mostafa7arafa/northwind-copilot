@@ -55,7 +55,9 @@ notes live under `docs/maintenance/` and are not ingested by that glob.
 
 ## Preserved SaaS work
 
-`saas/paused` points to the complete pre-simplification implementation, including
-its cleanup commits, tests, migrations, and deployment documentation. It is a
-local branch: nothing has been pushed by this work. Revisit its design before
-reusing it for a hosted service; it is not the active product specification.
+The archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot contains the complete pre-simplification implementation, including its
+cleanup commits, tests, migrations, and deployment documentation. Revisit its
+design before reusing it for a hosted service; it is not the active product
+specification.

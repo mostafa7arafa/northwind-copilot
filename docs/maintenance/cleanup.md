@@ -1,7 +1,9 @@
 # Historical cleanup audit (before single-user simplification)
 
-This records `chore/cleanup`, preserved on `saas/paused`. Its SaaS paths, test
-count, and deferred candidates describe that snapshot, not the current personal
+This records `chore/cleanup`, preserved as the archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot. Its SaaS paths, test count, and deferred candidates describe that
+snapshot, not the current personal
 workspace. See [architecture.md](architecture.md) and [VALIDATION.md](VALIDATION.md)
 for the active product.
 

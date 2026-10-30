@@ -6,7 +6,9 @@ The owner decided to keep Northwind Copilot a simple personal project. Preserve
 current SaaS work on another local branch, make local `master` the single-user
 product, update README/docs, and simplify startup. Do not push.
 
-Preservation ref: `saas/paused` at `15bcded912b3b85ab00e4d56f33681529bfff53e`.
+Preservation ref: archived, unmaintained
+[`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+snapshot at `15bcded912b3b85ab00e4d56f33681529bfff53e`.
 Implementation branch: `refactor/single-user`, based on that preserved snapshot.
 Only fast-forward local `master` after relevant checks and independent review.
 

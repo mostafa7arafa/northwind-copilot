@@ -77,7 +77,9 @@ At implementation commit `99dd7e0`:
 - Independent standards and specification reviews found the initial recovery
   issues; the second/final review confirmed the fixes with no unresolved issues.
 - GPT-6 model construction, the static graph, POC prompts/definitions, and the
-  evaluation instrument remain unchanged from the preserved `saas/paused` ref.
+  evaluation instrument remain unchanged from the archived, unmaintained
+  [`saas/paused`](https://github.com/mostafa7arafa/northwind-copilot/tree/saas/paused)
+  snapshot.
 
 Real-model answer quality, visual browser interaction, and a backup/restore drill
 remain manual checks, not completed claims in this implementation receipt.
