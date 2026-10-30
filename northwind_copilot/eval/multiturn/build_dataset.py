@@ -78,7 +78,8 @@ def build_turn(conn: sqlite3.Connection, turn: Turn, position: int) -> dict[str,
         A serialisable turn record carrying question, reference, and probes.
 
     Raises:
-        ValueError: If a turn expected to return rows returns none (a broken
+        ValueError: If a turn expected to return rows returns none, an empty
+            probe returns rows, or every returned value is NULL (a broken
             reference query would silently poison the whole experiment).
     """
     rows = execute(conn, turn.reference_sql)
@@ -92,6 +93,14 @@ def build_turn(conn: sqlite3.Connection, turn: Turn, position: int) -> dict[str,
     if not rows and not expects_empty:
         raise ValueError(
             f"turn {position} returned no rows; its reference SQL is wrong"
+        )
+
+    # SUM over no matching rows produces a single all-NULL row, not [].
+    # Do not silently publish that as numeric ground truth if a query loses
+    # its HAVING safeguard or its empty_result probe. A genuine 0 is valid.
+    if rows and all(value is None for row in rows for value in row.values()):
+        raise ValueError(
+            f"turn {position} returned only NULL values; check its reference SQL"
         )
 
     reference = turn.reference_override or render_rows(rows)

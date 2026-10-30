@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from northwind_copilot.eval.multiturn.build_dataset import build_all, render_rows
+from northwind_copilot.eval.multiturn.build_dataset import (
+    build_all,
+    build_turn,
+    render_rows,
+)
 from northwind_copilot.eval.multiturn.run_experiment import (
     _as_score,
     _format_call,
@@ -20,6 +24,7 @@ from northwind_copilot.eval.multiturn.run_experiment import (
 )
 from northwind_copilot.eval.multiturn.scenarios import (
     SCENARIOS,
+    Turn,
     scenario_count,
     turn_count,
 )
@@ -113,6 +118,34 @@ class TestReferenceGroundTruth:
         reference = record["turns"][0]["reference"]
         assert "no orders in 1997" in reference.lower()
         assert record["turns"][0]["reference_rows"] == []
+
+
+class TestNullAggregateRegression:
+    def test_missing_year_null_aggregate_is_not_valid_ground_truth(self, conn):
+        scenario = next(s for s in SCENARIOS if s.id == "missing_year_1997")
+        # An ungrouped SUM returns one NULL row, not an empty result. A stale
+        # reference without HAVING must fail even if its empty_result tag is lost.
+        sql = scenario.turns[0].reference_sql.split("HAVING")[0]
+        assert conn.execute(sql).fetchall() == [(None,)]
+        turn = Turn(question="Revenue for a year without orders?", reference_sql=sql)
+        with pytest.raises(ValueError, match="only NULL"):
+            build_turn(conn, turn, 1)
+
+    def test_real_zero_remains_valid_ground_truth(self, conn):
+        turn = Turn(question="A recorded zero?", reference_sql="SELECT 0 AS revenue")
+        result = build_turn(conn, turn, 1)
+        assert result["reference_rows"] == [{"revenue": 0}]
+        assert result["reference"] == "revenue=0"
+
+    def test_empty_probe_rejects_a_single_null_row(self, conn):
+        scenario = next(s for s in SCENARIOS if s.id == "missing_year_1997")
+        turn = Turn(
+            question=scenario.turns[0].question,
+            reference_sql=scenario.turns[0].reference_sql.split("HAVING")[0],
+            probes=("empty_result",),
+        )
+        with pytest.raises(ValueError, match="empty_result"):
+            build_turn(conn, turn, 1)
 
 
 class TestRenderRows:
