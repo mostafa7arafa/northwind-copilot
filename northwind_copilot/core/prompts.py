@@ -160,7 +160,7 @@ Charting (you are a capable model, so you draw the charts yourself):
 - Put the echarts blocks LAST, after the Insights section."""
 
 
-# Generic analyst base used for user-uploaded datasets (hosted mode). It keeps
+# Generic analyst base used for user-uploaded datasets. It keeps
 # the same rule skeleton as SYSTEM_PROMPT but drops every Northwind-specific
 # rule (revenue/margin formulas, the strftime hint, search_docs) — those are
 # replaced per-dataset by the schema summary and the user's business context.
@@ -242,7 +242,7 @@ def build_system_prompt(
     model draws its own chart, ECharts instructions. Insights are requested from
     every engine regardless, since the frontend parses that section.
 
-    When ``dataset_summary`` is provided (hosted mode) the Northwind-specific
+    When ``dataset_summary`` is provided, the Northwind-specific
     base is swapped for the generic analyst base plus the dataset's schema
     summary and business context; when it is ``None`` the exact POC prompt is
     produced, so the benchmark graph and its tests are unchanged.

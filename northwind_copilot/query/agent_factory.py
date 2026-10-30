@@ -61,7 +61,7 @@ class EngineConfig:
 
 @dataclass(frozen=True)
 class DatasetContext:
-    """The uploaded dataset one request runs against (hosted mode).
+    """The uploaded dataset one request runs against.
 
     Kept separate from :class:`EngineConfig` (which is purely about inference)
     so the agent's data source and its model are independent choices.
@@ -159,7 +159,7 @@ def build_agent_for(
         user_preferences: Free text appended to the system prompt.
         fallback: Optional cloud model used as the escalation target for a
             local primary.
-        dataset: The uploaded dataset to query (hosted mode). When ``None`` the
+        dataset: The uploaded dataset to query. When ``None`` the
             agent runs against the configured Northwind database (POC) with the
             Northwind-specific prompt and the ``search_docs`` knowledge tool.
 

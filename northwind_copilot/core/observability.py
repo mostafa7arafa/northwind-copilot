@@ -1,4 +1,4 @@
-"""Error tracking (Sentry) for the hosted service.
+"""Opt-in error tracking (Sentry) for the personal app.
 
 Opt-in via ``SENTRY_DSN`` and safe to run without the SDK installed (the POC
 and the test suite never need it). Every outgoing event passes through a
