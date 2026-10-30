@@ -18,8 +18,8 @@ Baseline commands (UTF-8 environment):
 ```bash
 PYTHONIOENCODING=utf-8 uv run pytest --cov --cov-report=term-missing
 uv run black --check northwind_copilot tests
-uv run isort --check-only northwind_copilot tests
-uv run flake8 northwind_copilot tests
+uv run ruff check .
+uv run mypy
 uv run vulture --min-confidence 0
 ```
 
@@ -128,7 +128,7 @@ of documented configuration and schema compatibility:
 
 ## Deletions, moves, and renames
 
-No high-confidence finding justifies deleting code. Existing flake8 checks find
+No high-confidence finding justifies deleting code. Existing unused-import checks find
 no unused imports. A source-comment scan found no obsolete commented-out code
 blocks to remove. No whole module was proven dead by the combined reference and
 coverage audit. Do not delete low-confidence candidates to manufacture a diff.
@@ -143,7 +143,7 @@ graph or eval harness, rename `build_model`, or alter its GPT-6 handling.
 - Full offline suite: **269 passed**, same 5 warnings as the baseline.
 - Total and per-module coverage summaries are identical to baseline: **75%**
   including branches; no statement or branch coverage regression.
-- Black, isort, flake8, `uv lock --check`, and `git diff --check` pass.
+- Black, import-order/lint checks, `uv lock --check`, and `git diff --check` pass.
 - `uv run vulture` passes with no findings at 80% or higher.
 - `uv run vulture --min-confidence 0` still reports all **87** review-only
   findings described above; none were deleted or globally suppressed.

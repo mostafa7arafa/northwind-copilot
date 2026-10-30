@@ -111,7 +111,7 @@ async def upload_dataset(
         )
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="File exceeds the upload size limit.",
         )
     dataset = Dataset(
@@ -170,7 +170,7 @@ async def add_file(
         )
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="File exceeds the upload size limit.",
         )
     name_hint = (file.filename or "data").rsplit(".", 1)[0]
